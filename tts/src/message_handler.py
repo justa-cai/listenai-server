@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """Handles incoming WebSocket messages."""
 
-    def __init__(self, model_config, queue, voice_manager=None):
+    def __init__(self, model_config, queue, voice_manager=None, server_config=None):
         """
         Initialize the message handler.
 
@@ -29,11 +29,13 @@ class MessageHandler:
             model_config: Model configuration
             queue: Task queue for TTS requests
             voice_manager: Optional voice manager for voice cloning
+            server_config: Optional server configuration
         """
         self.model_config = model_config
         self.queue = queue
         self.validator = TTSRequestValidator(model_config)
         self.voice_manager = voice_manager
+        self.server_config = server_config
 
     def set_voice_manager(self, voice_manager):
         """Set the voice manager."""
@@ -126,7 +128,8 @@ class MessageHandler:
         task = TTSRequestTask(
             session=session,
             model_config=self.model_config,
-            connection=connection
+            connection=connection,
+            server_config=self.server_config
         )
 
         # Add to queue

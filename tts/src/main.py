@@ -4,6 +4,7 @@ import asyncio
 import signal
 import logging
 import os
+import argparse
 from pathlib import Path
 
 from .config import Config
@@ -12,14 +13,38 @@ from .http_server import HTTPWebServer
 from .voice_manager import get_voice_manager
 from .logging_config import setup_logging
 from .metrics import init_metrics
+from .model_cache import ModelCache
 
 logger = logging.getLogger(__name__)
 
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="VoxCPM WebSocket TTS Server",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    parser.add_argument(
+        "--debug-audio",
+        action="store_true",
+        help="Enable debug audio saving to ./tmp/debug_audio/"
+    )
+
+    return parser.parse_args()
+
+
 async def main():
     """Main entry point."""
+    # Parse command line arguments
+    args = parse_args()
+
     # Load configuration
     config = Config.from_env()
+
+    # Override config with command line arguments
+    if args.debug_audio:
+        config.server.debug_audio = True
 
     # Setup logging
     setup_logging(config.server.log_level, config.server.log_format)
@@ -30,9 +55,16 @@ async def main():
     logger.info(f"Model config: name={config.model.model_name}, device={config.model.device}")
     logger.info(f"Max concurrent requests: {config.server.max_concurrent_requests}")
     logger.info(f"Max connections: {config.server.max_connections}")
+    logger.info(f"Debug audio: {config.server.debug_audio}")
 
     # Initialize metrics
     init_metrics(config.server)
+
+    # Load model at startup
+    logger.info("Loading VoxCPM model...")
+    model_cache = await ModelCache.get_instance()
+    model = await model_cache.get_model(config.model)
+    logger.info(f"Model loaded successfully: {config.model.model_name}")
 
     # Resolve voice directory path
     voice_dir = config.server.voice_dir

@@ -45,7 +45,7 @@ class VoxCPMWebSocketServer:
         self.state = ServerState()
         self.session_manager = SessionManager()
         self.queue = TaskQueue(max_concurrent=server_config.max_concurrent_requests)
-        self.message_handler = MessageHandler(model_config, self.queue)
+        self.message_handler = MessageHandler(model_config, self.queue, server_config=server_config)
         self._running = False
         self._server = None
         self._metrics_task = None

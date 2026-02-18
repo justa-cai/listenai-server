@@ -1,122 +1,7 @@
 /**
  * VoxCPM TTS Web Client
- * Streaming audio playback support with audio caching
+ * Streaming audio playback support
  */
-
-// IndexedDB for audio storage
-class AudioStorage {
-    constructor() {
-        this.dbName = 'VoxCPMAudioCache';
-        this.storeName = 'audio';
-        this.db = null;
-    }
-
-    async init() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, 1);
-
-            request.onerror = () => reject(request.error);
-            request.onsuccess = () => {
-                this.db = request.result;
-                resolve();
-            };
-
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-                if (!db.objectStoreNames.contains(this.storeName)) {
-                    const store = db.createObjectStore(this.storeName, { keyPath: 'id' });
-                    store.createIndex('timestamp', 'timestamp', { unique: false });
-                }
-            };
-        });
-    }
-
-    async saveAudio(id, audioData, metadata) {
-        if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readwrite');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.put({
-                id,
-                audioData, // Int16Array
-                metadata,
-                timestamp: Date.now()
-            });
-
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    async getAudio(id) {
-        if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readonly');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.get(id);
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    async deleteAudio(id) {
-        if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readwrite');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.delete(id);
-
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    async getAll() {
-        if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readonly');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.getAll();
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    async clear() {
-        if (!this.db) await this.init();
-
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readwrite');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.clear();
-
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
-    }
-
-    async getStorageInfo() {
-        if (!this.db) await this.init();
-
-        return new Promise((resolve) => {
-            const transaction = this.db.transaction([this.storeName], 'readonly');
-            const store = transaction.objectStore(this.storeName);
-            const countRequest = store.count();
-
-            countRequest.onsuccess = () => {
-                // Estimate storage size (rough estimate)
-                const estimate = countRequest.result * 2; // Rough estimate per entry
-                resolve({ count: countRequest.result, sizeEstimate: estimate });
-            };
-        });
-    }
-}
 
 class VoxCPMClient {
     constructor() {
@@ -130,17 +15,13 @@ class VoxCPMClient {
         this.completeAudio = null;  // Complete audio for replay
         this.completeAudioSampleRate = 24000;
         this.sampleRate = 24000;
-        this.history = this.loadHistory();
         this.isProcessing = false;
-        this.audioStorage = new AudioStorage();
         this.currentRequestId = null;
-        this.historyMetadata = this.loadHistoryMetadata();
         this.voices = {};  // Available voices
 
         this.initAudioContext();
         this.initEventListeners();
         this.connect();
-        this.audioStorage.init().catch(console.error);
         this.loadVoices();  // Load voices
     }
 
@@ -479,14 +360,21 @@ class VoxCPMClient {
         const result = message.result || {};
 
         if (!result.cancelled) {
-            // Save audio to IndexedDB
-            await this.saveAudioToStorage(result);
+            // Store complete audio for replay
+            const totalLength = this.audioBuffer.reduce((sum, chunk) => sum + chunk.data.length, 0);
+            const combinedAudio = new Int16Array(totalLength);
+            let offset = 0;
+
+            for (const chunk of this.audioBuffer) {
+                combinedAudio.set(chunk.data, offset);
+                offset += chunk.data.length;
+            }
+
+            this.completeAudio = combinedAudio;
+            this.completeAudioSampleRate = result.sample_rate || this.sampleRate;
 
             // Update stats
             this.updateStats(result);
-
-            // Add to history
-            this.addToHistory(result);
 
             // Show download button
             document.getElementById('downloadBtn').disabled = false;
@@ -509,34 +397,6 @@ class VoxCPMClient {
         this.setGenerateButtonState(false);
     }
 
-    async saveAudioToStorage(result) {
-        // Combine all audio chunks (each chunk is now an object with data property)
-        const totalLength = this.audioBuffer.reduce((sum, chunk) => sum + chunk.data.length, 0);
-        const combinedAudio = new Int16Array(totalLength);
-        let offset = 0;
-
-        for (const chunk of this.audioBuffer) {
-            combinedAudio.set(chunk.data, offset);
-            offset += chunk.data.length;
-        }
-
-        // Store complete audio for replay
-        this.completeAudio = combinedAudio;
-        this.completeAudioSampleRate = result.sample_rate || this.sampleRate;
-
-        // Save to IndexedDB
-        await this.audioStorage.saveAudio(
-            this.currentRequestId,
-            combinedAudio,
-            {
-                text: document.getElementById('textInput').value.trim(),
-                duration: result.duration,
-                sampleRate: result.sample_rate || this.sampleRate,
-                timestamp: Date.now()
-            }
-        );
-    }
-
     async generateSpeech() {
         const text = document.getElementById('textInput').value.trim();
         if (!text) {
@@ -553,6 +413,7 @@ class VoxCPMClient {
 
         // Reset state
         this.audioBuffer = [];
+        this.completeAudio = null;
         this.isProcessing = true;
         this.currentRequestId = crypto.randomUUID();
         this.setGenerateButtonState(true);
@@ -684,37 +545,6 @@ class VoxCPMClient {
         await this.playCachedAudio(audioToPlay, sampleRate);
     }
 
-    async playHistoryAudio(id) {
-        const record = await this.audioStorage.getAudio(id);
-        if (!record) {
-            this.showError('音频缓存不存在');
-            return;
-        }
-
-        const { audioData, metadata } = record;
-
-        // Update text input with history text
-        document.getElementById('textInput').value = metadata.text;
-
-        // Update stats display
-        this.updateStats({
-            duration: metadata.duration,
-            samples: audioData.length,
-            sample_rate: metadata.sampleRate
-        });
-
-        // Show audio player (remove empty state)
-        const player = document.getElementById('audioPlayer');
-        player.style.display = 'block';
-        player.classList.remove('empty');
-
-        // Play the cached audio
-        await this.playCachedAudio(audioData, metadata.sampleRate);
-
-        // Enable download button
-        document.getElementById('downloadBtn').disabled = false;
-    }
-
     downloadAudio() {
         let audioToDownload = null;
         let sampleRate = this.sampleRate;
@@ -750,43 +580,6 @@ class VoxCPMClient {
         a.download = `voxcpm-tts-${Date.now()}.wav`;
         a.click();
         URL.revokeObjectURL(url);
-    }
-
-    downloadHistoryAudio(id) {
-        this.audioStorage.getAudio(id).then(record => {
-            if (!record) return;
-
-            const { audioData, metadata } = record;
-
-            // Create WAV file
-            const wav = this.createWavFile(audioData, metadata.sampleRate);
-            const blob = new Blob([wav], { type: 'audio/wav' });
-            const url = URL.createObjectURL(blob);
-
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `voxcpm-tts-${id}.wav`;
-            a.click();
-            URL.revokeObjectURL(url);
-        });
-    }
-
-    deleteHistoryItem(id) {
-        this.audioStorage.deleteAudio(id);
-
-        // Remove from history metadata
-        this.historyMetadata = this.historyMetadata.filter(item => item.id !== id);
-        this.saveHistoryMetadata();
-
-        // Re-render history
-        this.renderHistory();
-    }
-
-    async clearHistory() {
-        await this.audioStorage.clear();
-        this.historyMetadata = [];
-        this.saveHistory();
-        this.renderHistory();
     }
 
     createWavFile(audioData, sampleRate) {
@@ -881,97 +674,6 @@ class VoxCPMClient {
         document.getElementById('errorMessage').classList.remove('show');
     }
 
-    async addToHistory(result) {
-        const text = document.getElementById('textInput').value.trim();
-        const item = {
-            id: this.currentRequestId,
-            text: text,
-            duration: result.duration,
-            sampleRate: result.sample_rate || this.sampleRate,
-            samples: result.samples || 0,
-            timestamp: Date.now(),
-            hasAudio: true
-        };
-
-        this.historyMetadata.unshift(item);
-        if (this.historyMetadata.length > 20) {
-            // Remove old items from IndexedDB
-            const removedItem = this.historyMetadata.pop();
-            if (removedItem.hasAudio) {
-                await this.audioStorage.deleteAudio(removedItem.id);
-            }
-        }
-
-        this.saveHistoryMetadata();
-        this.renderHistory();
-    }
-
-    loadHistory() {
-        try {
-            return JSON.parse(localStorage.getItem('voxcpm-history') || '[]');
-        } catch {
-            return [];
-        }
-    }
-
-    loadHistoryMetadata() {
-        try {
-            return JSON.parse(localStorage.getItem('voxcpm-history-metadata') || '[]');
-        } catch {
-            return [];
-        }
-    }
-
-    saveHistory() {
-        localStorage.setItem('voxcpm-history', JSON.stringify(this.history));
-    }
-
-    saveHistoryMetadata() {
-        localStorage.setItem('voxcpm-history-metadata', JSON.stringify(this.historyMetadata));
-    }
-
-    async renderHistory() {
-        const container = document.getElementById('historyList');
-        const clearBtn = document.getElementById('clearHistoryBtn');
-        const storageInfo = document.getElementById('storageInfo');
-
-        // Update storage info
-        const storageData = await this.audioStorage.getStorageInfo();
-        storageInfo.textContent = `已缓存 ${storageData.count} 个音频`;
-
-        // Show/hide clear button
-        clearBtn.style.display = this.historyMetadata.length > 0 ? 'block' : 'none';
-
-        if (this.historyMetadata.length === 0) {
-            container.innerHTML = '<div class="empty-history">暂无历史记录</div>';
-            return;
-        }
-
-        container.innerHTML = this.historyMetadata.map(item => `
-            <div class="history-item">
-                <div class="history-item-header">
-                    <div class="history-item-text">${this.escapeHtml(item.text.substring(0, 80))}${item.text.length > 80 ? '...' : ''}</div>
-                    <div class="history-item-actions">
-                        ${item.hasAudio ? `<button class="history-btn play-btn" onclick="client.playHistoryAudio('${item.id}')">▶️ 播放</button>` : ''}
-                        ${item.hasAudio ? `<button class="history-btn" onclick="client.downloadHistoryAudio('${item.id}')">💾</button>` : ''}
-                        <button class="history-btn" onclick="client.loadTextFromHistory('${item.id}')">📝</button>
-                        <button class="history-btn" onclick="client.deleteHistoryItem('${item.id}')">🗑️</button>
-                    </div>
-                </div>
-                <div class="history-item-meta">
-                    ${(item.duration || 0).toFixed(2)}s • ${new Date(item.timestamp).toLocaleString()}
-                </div>
-            </div>
-        `).join('');
-    }
-
-    loadTextFromHistory(id) {
-        const item = this.historyMetadata.find(h => h.id === id);
-        if (item) {
-            document.getElementById('textInput').value = item.text;
-        }
-    }
-
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
@@ -984,7 +686,6 @@ class VoxCPMClient {
         document.getElementById('downloadBtn').addEventListener('click', () => this.downloadAudio());
         document.getElementById('playCurrentBtn').addEventListener('click', () => this.playCurrentAudio());
         document.getElementById('reconnectBtn').addEventListener('click', () => this.reconnect());
-        document.getElementById('clearHistoryBtn').addEventListener('click', () => this.clearHistory());
         document.getElementById('refreshVoicesBtn').addEventListener('click', () => this.refreshVoices());
 
         // Sliders
@@ -1010,5 +711,4 @@ class VoxCPMClient {
 let client;
 document.addEventListener('DOMContentLoaded', () => {
     client = new VoxCPMClient();
-    client.renderHistory();
 });

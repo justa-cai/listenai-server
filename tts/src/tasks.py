@@ -12,6 +12,10 @@ from .config import ModelConfig
 from .audio_processor import AudioProcessor
 from .connection import Connection
 from .model_cache import ModelCache
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import ServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +87,8 @@ class TTSRequestTask:
         self,
         session: Session,
         model_config: ModelConfig,
-        connection: Connection
+        connection: Connection,
+        server_config: "ServerConfig" = None
     ):
         """
         Initialize the TTS request task.
@@ -92,10 +97,12 @@ class TTSRequestTask:
             session: Session object
             model_config: Model configuration
             connection: Connection object for sending responses
+            server_config: Server configuration (optional)
         """
         self.session = session
         self.model_config = model_config
         self.connection = connection
+        self.server_config = server_config
         self.audio_processor = AudioProcessor()
         self._cancelled = False
         self._model_cache: Optional[ModelCache] = None
@@ -121,7 +128,7 @@ class TTSRequestTask:
             await self._update_state("completed")
 
             # Save debug audio (all chunks sent to client for streaming mode)
-            if self._debug_audio_chunks and not self._cancelled:
+            if self._debug_audio_chunks and not self._cancelled and self._is_debug_audio_enabled():
                 combined_audio = b''.join(self._debug_audio_chunks)
                 sample_rate = self.session.result.get('sample_rate', 24000)
                 _save_debug_audio(
@@ -215,7 +222,7 @@ class TTSRequestTask:
                 await asyncio.sleep(0)
 
             # Save debug audio (complete audio)
-            if not self._cancelled and all_audio_bytes:
+            if not self._cancelled and all_audio_bytes and self._is_debug_audio_enabled():
                 _save_debug_audio(
                     bytes(all_audio_bytes),
                     model.tts_model.sample_rate,
@@ -284,12 +291,13 @@ class TTSRequestTask:
             audio_bytes = self.audio_processor.to_pcm16(wav)
 
             # Save debug audio
-            _save_debug_audio(
-                audio_bytes,
-                model.tts_model.sample_rate,
-                self.session.request_id,
-                "_non_streaming"
-            )
+            if self._is_debug_audio_enabled():
+                _save_debug_audio(
+                    audio_bytes,
+                    model.tts_model.sample_rate,
+                    self.session.request_id,
+                    "_non_streaming"
+                )
 
             # Send complete audio
             await self._send_audio_full(
@@ -365,12 +373,13 @@ class TTSRequestTask:
         """Send complete audio in non-streaming mode."""
         try:
             # Save debug audio (sent to client)
-            _save_debug_audio(
-                audio_bytes,
-                sample_rate,
-                self.session.request_id,
-                "_sent"
-            )
+            if self._is_debug_audio_enabled():
+                _save_debug_audio(
+                    audio_bytes,
+                    sample_rate,
+                    self.session.request_id,
+                    "_sent"
+                )
 
             await self.connection.send_binary_frame(
                 msg_type=Connection.FRAME_TYPE_NON_STREAMING,
@@ -404,6 +413,10 @@ class TTSRequestTask:
             )
         except Exception as e:
             logger.warning(f"Failed to send error: {e}")
+
+    def _is_debug_audio_enabled(self) -> bool:
+        """Check if debug audio saving is enabled."""
+        return self.server_config is not None and getattr(self.server_config, 'debug_audio', False)
 
     def cancel(self) -> None:
         """Cancel the task."""

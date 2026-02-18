@@ -37,6 +37,9 @@ class ServerConfig:
     log_level: str = "INFO"
     log_format: str = "json"  # or "text"
 
+    # Debug
+    debug_audio: bool = False  # Enable debug audio saving to ./tmp/debug_audio/
+
 
 @dataclass
 class ModelConfig:
@@ -54,9 +57,9 @@ class ModelConfig:
 
     # Default TTS parameters
     default_cfg_value: float = 2.0
-    default_inference_timesteps: int = 10
+    default_inference_timesteps: int = 30
     default_normalize: bool = False
-    default_denoise: bool = False
+    default_denoise: bool = True
     default_retry_badcase: bool = True
     default_retry_badcase_max_times: int = 3
     default_retry_badcase_ratio_threshold: float = 6.0
@@ -96,6 +99,7 @@ class Config:
             metrics_port=int(os.getenv("TTS_METRICS_PORT", "9090")),
             log_level=os.getenv("TTS_LOG_LEVEL", "INFO"),
             log_format=os.getenv("TTS_LOG_FORMAT", "json"),
+            debug_audio=os.getenv("TTS_DEBUG_AUDIO", "false").lower() == "true",
         )
 
         model = ModelConfig(
