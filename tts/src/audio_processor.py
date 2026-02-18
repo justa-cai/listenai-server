@@ -134,7 +134,7 @@ class AudioProcessor:
         audio: np.ndarray,
         threshold: float = 0.01,
         min_duration: float = 0.1,
-        sample_rate: int = 24000
+        sample_rate: int = 16000
     ) -> list[Tuple[int, int]]:
         """
         Detect silent regions in audio.

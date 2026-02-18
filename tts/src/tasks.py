@@ -130,7 +130,7 @@ class TTSRequestTask:
             # Save debug audio (all chunks sent to client for streaming mode)
             if self._debug_audio_chunks and not self._cancelled and self._is_debug_audio_enabled():
                 combined_audio = b''.join(self._debug_audio_chunks)
-                sample_rate = self.session.result.get('sample_rate', 24000)
+                sample_rate = self.session.result.get('sample_rate', 16000)
                 _save_debug_audio(
                     combined_audio,
                     sample_rate,

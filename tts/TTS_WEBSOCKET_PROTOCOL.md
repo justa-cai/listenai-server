@@ -181,7 +181,7 @@ Metadata (JSON, length-prefixed with 4 bytes)
 {
   "request_id": "uuid-string",
   "sequence": 0,
-  "sample_rate": 24000,
+  "sample_rate": 16000,
   "is_final": false
 }
 
@@ -201,7 +201,7 @@ Frame Header (4 bytes): [0xAA, 0x55, 0x00, 0x02]
 Metadata (JSON, length-prefixed with 4 bytes)
 {
   "request_id": "uuid-string",
-  "sample_rate": 24000,
+  "sample_rate": 16000,
   "duration": 5.23
 }
 
@@ -249,7 +249,7 @@ Audio Payload (Binary, length-prefixed with 4 bytes)
   "request_id": "uuid-string",
   "result": {
     "duration": 5.23,
-    "sample_rate": 24000,
+    "sample_rate": 16000,
     "samples": 125520,
     "chunks": 10
   }
@@ -524,7 +524,7 @@ GET /api/config
 | `max_queue_size` | `50` | 最大队列大小 |
 | `request_timeout` | `600` | 请求超时（10分钟） |
 | `chunk_size` | `4096` | 流式音频块大小（采样点数） |
-| `sample_rate` | `24000` | 默认采样率 |
+| `sample_rate` | `16000` | 默认采样率 |
 | `voice_dir` | `voice_clone` | 声音样本目录 |
 | `debug_audio` | `false` | 调试音频保存 |
 | `rate_limit_enabled` | `true` | 是否启用速率限制 |

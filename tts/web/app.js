@@ -13,8 +13,8 @@ class VoxCPMClient {
         this.currentSource = null;
         this.audioBuffer = [];  // Current audio being generated
         this.completeAudio = null;  // Complete audio for replay
-        this.completeAudioSampleRate = 24000;
-        this.sampleRate = 24000;
+        this.completeAudioSampleRate = 16000;
+        this.sampleRate = 16000;
         this.isProcessing = false;
         this.currentRequestId = null;
         this.voices = {};  // Available voices
@@ -151,7 +151,7 @@ class VoxCPMClient {
         // Store audio chunk with its metadata (including sample rate)
         this.audioBuffer.push({
             data: audio,
-            sampleRate: metadata.sample_rate || 24000,
+            sampleRate: metadata.sample_rate || 16000,
             sequence: metadata.sequence
         });
 
@@ -642,7 +642,7 @@ class VoxCPMClient {
         document.getElementById('statSamples').textContent =
             (result.samples || 0).toLocaleString();
         document.getElementById('statSampleRate').textContent =
-            `${(result.sample_rate || 24000) / 1000}kHz`;
+            `${(result.sample_rate || 16000) / 1000}kHz`;
 
         document.getElementById('audioStats').style.display = 'grid';
 

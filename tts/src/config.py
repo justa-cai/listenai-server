@@ -20,7 +20,7 @@ class ServerConfig:
 
     # Audio settings
     chunk_size: int = 4096  # samples per chunk
-    sample_rate: int = 24000
+    sample_rate: int = 16000
 
     # Voice cloning settings
     voice_dir: str = "voice_clone"  # Directory containing voice samples
@@ -91,7 +91,7 @@ class Config:
             max_queue_size=int(os.getenv("TTS_MAX_QUEUE_SIZE", "50")),
             request_timeout=int(os.getenv("TTS_REQUEST_TIMEOUT", "600")),
             chunk_size=int(os.getenv("TTS_CHUNK_SIZE", "4096")),
-            sample_rate=int(os.getenv("TTS_SAMPLE_RATE", "24000")),
+            sample_rate=int(os.getenv("TTS_SAMPLE_RATE", "16000")),
             voice_dir=os.getenv("TTS_VOICE_DIR", "voice_clone"),
             rate_limit_enabled=os.getenv("TTS_RATE_LIMIT_ENABLED", "true").lower() == "true",
             rate_limit_per_minute=int(os.getenv("TTS_RATE_LIMIT_PER_MINUTE", "60")),
