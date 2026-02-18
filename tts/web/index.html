@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoxCPM TTS - 语音合成体验</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #6366f1;
+            --primary-hover: #4f46e5;
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border-color: #334155;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, var(--bg-color) 0%, #1e1b4b 100%);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            flex: 1;
+        }
+
+        header {
+            text-align: center;
+            padding: 30px 0;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 900px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card h2::before {
+            content: '';
+            width: 4px;
+            height: 24px;
+            background: var(--primary-color);
+            border-radius: 2px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        textarea, input[type="text"], select, input[type="number"] {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-color);
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus, input:focus, select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            height: 6px;
+            background: var(--border-color);
+            border-radius: 3px;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--primary-color);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .slider-value {
+            min-width: 50px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: var(--bg-color);
+            border-radius: 8px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--border-color);
+            border-radius: 24px;
+            transition: 0.3s;
+        }
+
+        .toggle-slider::before {
+            position: absolute;
+            content: '';
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--primary-color);
+        }
+
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(24px);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: var(--border-color);
+            color: var(--text-color);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #475569;
+        }
+
+        .btn-icon {
+            padding: 8px 12px;
+            font-size: 0.9rem;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: var(--bg-color);
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--border-color);
+        }
+
+        .status-indicator.connected {
+            background: var(--success-color);
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.processing {
+            background: var(--warning-color);
+            animation: pulse 1s infinite;
+        }
+
+        .status-indicator.disconnected {
+            background: var(--error-color);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            flex: 1;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .reconnect-btn {
+            background: var(--primary-color);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .reconnect-btn:hover:not(:disabled) {
+            background: var(--primary-hover);
+            opacity: 0.9;
+        }
+
+        .reconnect-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .reconnect-btn.connecting {
+            animation: pulse 1s infinite;
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: var(--border-color);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        .audio-player {
+            background: var(--bg-color);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .audio-player.empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+            color: var(--text-secondary);
+        }
+
+        .audio-visualizer {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 60px;
+            margin-bottom: 20px;
+        }
+
+        .audio-bar {
+            width: 4px;
+            background: var(--primary-color);
+            border-radius: 2px;
+            animation: audioWave 1s ease-in-out infinite;
+        }
+
+        @keyframes audioWave {
+            0%, 100% { height: 20%; }
+            50% { height: 100%; }
+        }
+
+        .audio-bar:nth-child(1) { animation-delay: 0s; }
+        .audio-bar:nth-child(2) { animation-delay: 0.1s; }
+        .audio-bar:nth-child(3) { animation-delay: 0.2s; }
+        .audio-bar:nth-child(4) { animation-delay: 0.3s; }
+        .audio-bar:nth-child(5) { animation-delay: 0.4s; }
+        .audio-bar:nth-child(6) { animation-delay: 0.3s; }
+        .audio-bar:nth-child(7) { animation-delay: 0.2s; }
+        .audio-bar:nth-child(8) { animation-delay: 0.1s; }
+
+        .audio-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error-color);
+            color: var(--error-color);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .params-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media (max-width: 600px) {
+            .params-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .history-item {
+            background: var(--bg-color);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            transition: background 0.2s;
+        }
+
+        .history-item:hover {
+            background: var(--border-color);
+        }
+
+        .history-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .history-item-text {
+            font-size: 0.9rem;
+            flex: 1;
+        }
+
+        .history-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .history-btn {
+            background: var(--border-color);
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+            color: var(--text-color);
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: background 0.2s;
+        }
+
+        .history-btn:hover {
+            background: var(--primary-color);
+        }
+
+        .history-btn.play-btn {
+            background: var(--success-color);
+        }
+
+        .history-item-meta {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-history {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 30px;
+        }
+
+        .storage-info {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-top: 10px;
+        }
+
+        .clear-history-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-left: auto;
+        }
+
+        .clear-history-btn:hover {
+            border-color: var(--error-color);
+            color: var(--error-color);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🎙️ VoxCPM TTS</h1>
+        <p>高质量语音合成体验</p>
+    </header>
+
+    <div class="container">
+        <div class="main-content">
+            <!-- Left Panel: Input -->
+            <div class="card">
+                <h2>输入设置</h2>
+
+                <div class="form-group">
+                    <label for="textInput">要合成的文本</label>
+                    <textarea id="textInput" placeholder="请输入要转换为语音的文本...">VoxCPM 是一个创新的端到端 TTS 模型，由 ModelBest 开发，旨在生成高度富有表现力的语音。</textarea>
+                </div>
+
+                <div class="params-grid">
+                    <div class="form-group">
+                        <label>模式</label>
+                        <select id="modeSelect">
+                            <option value="streaming">流式播放</option>
+                            <option value="non_streaming">完整生成</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>选择声音 (可选)</label>
+                        <select id="voiceSelect">
+                            <option value="">默认声音</option>
+                        </select>
+                        <button class="btn-icon" id="refreshVoicesBtn" style="margin-top: 5px; padding: 4px 8px; font-size: 0.8rem;">🔄 刷新声音列表</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="promptWavUrl">参考音频 URL (可选，用于自定义声音克隆)</label>
+                    <input type="text" id="promptWavUrl" placeholder="自定义参考音频 URL">
+                </div>
+
+                <div class="form-group">
+                    <label>CFG 值 (生成质量): <span id="cfgValue">2.0</span></label>
+                    <div class="slider-group">
+                        <input type="range" id="cfgSlider" min="0.1" max="10" step="0.1" value="2.0">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>推理步数: <span id="timestepsValue">10</span></label>
+                    <div class="slider-group">
+                        <input type="range" id="timestepsSlider" min="1" max="50" step="1" value="10">
+                    </div>
+                </div>
+
+                <div class="toggle-group">
+                    <label>文本规范化</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="normalizeToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="toggle-group">
+                    <label>音频降噪</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="denoiseToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="toggle-group">
+                    <label>坏案例重试</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="retryToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="btn-group">
+                    <button id="generateBtn" class="btn btn-primary">
+                        <span>▶️</span> 开始合成
+                    </button>
+                    <button id="stopBtn" class="btn btn-secondary" disabled>
+                        <span>⏹️</span> 停止
+                    </button>
+                </div>
+
+                <div class="status-bar">
+                    <div class="status-indicator" id="statusIndicator"></div>
+                    <div class="status-text" id="statusText">等待连接...</div>
+                    <button class="reconnect-btn" id="reconnectBtn">🔄 重新连接</button>
+                </div>
+
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+
+                <div class="error-message" id="errorMessage"></div>
+            </div>
+
+            <!-- Right Panel: Output -->
+            <div class="card">
+                <h2>音频输出</h2>
+
+                <div class="audio-player empty" id="audioPlayer">
+                    <div>
+                        <p>🔊</p>
+                        <p>生成的音频将在这里播放</p>
+                    </div>
+                </div>
+
+                <div class="audio-visualizer" id="audioVisualizer" style="display: none;">
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                    <div class="audio-bar"></div>
+                </div>
+
+                <div class="audio-stats" id="audioStats" style="display: none;">
+                    <div class="stat-item">
+                        <div class="stat-value" id="statDuration">0.0s</div>
+                        <div class="stat-label">时长</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statSamples">0</div>
+                        <div class="stat-label">采样数</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statSampleRate">24kHz</div>
+                        <div class="stat-label">采样率</div>
+                    </div>
+                </div>
+
+                <div class="btn-group" style="margin-top: 20px;">
+                    <button id="downloadBtn" class="btn btn-secondary" disabled>
+                        <span>💾</span> 下载音频
+                    </button>
+                    <button id="playCurrentBtn" class="btn btn-secondary" disabled>
+                        <span>▶️</span> 重新播放
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Section -->
+        <div class="card" style="margin-top: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>历史记录</h2>
+                <button class="clear-history-btn" id="clearHistoryBtn" style="display: none;">清空历史</button>
+            </div>
+            <div class="storage-info" id="storageInfo"></div>
+            <div id="historyList" style="margin-top: 15px;">
+                <div class="empty-history">暂无历史记录</div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>VoxCPM TTS Server &copy; 2025 | 基于 VoxCPM-0.5B 模型</p>
+    </footer>
+
+    <script src="/static/app.js?v=3"></script>
+</body>
+</html>
