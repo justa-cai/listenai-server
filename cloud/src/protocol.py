@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class ClientMessageType(str, Enum):
-    AUDIO_DATA = "audio_data"
+    TEXT_INPUT = "text_input"
     CONFIGURE = "configure"
     START_SESSION = "start_session"
     END_SESSION = "end_session"
@@ -14,21 +14,17 @@ class ClientMessageType(str, Enum):
 
 
 class ServerMessageType(str, Enum):
-    ASR_RESULT = "asr_result"
     LLM_RESPONSE = "llm_response"
-    TTS_AUDIO = "tts_audio"
+    TOOL_CALL = "tool_call"
     ERROR = "error"
     STATUS = "status"
     PONG = "pong"
-    TOOL_CALL = "tool_call"
 
 
 class ErrorCode(str, Enum):
     INVALID_MESSAGE = "INVALID_MESSAGE"
     UNKNOWN_MESSAGE_TYPE = "UNKNOWN_MESSAGE_TYPE"
-    ASR_ERROR = "ASR_ERROR"
     LLM_ERROR = "LLM_ERROR"
-    TTS_ERROR = "TTS_ERROR"
     SESSION_ERROR = "SESSION_ERROR"
     TIMEOUT = "TIMEOUT"
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -47,26 +43,31 @@ class BaseMessage:
 
 
 @dataclass
-class AudioDataMessage(BaseMessage):
-    type: str = ClientMessageType.AUDIO_DATA.value
-    data: bytes = b""
+class TextInputMessage(BaseMessage):
+    type: str = ClientMessageType.TEXT_INPUT.value
+    text: str = ""
+    session_id: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d = super().to_dict()
+        d["text"] = self.text
+        if self.session_id:
+            d["session_id"] = self.session_id
+        return d
 
 
 @dataclass
 class ConfigureMessage(BaseMessage):
     type: str = ClientMessageType.CONFIGURE.value
-    language: Optional[str] = None
-    voice_id: Optional[str] = None
-    sample_rate: Optional[int] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
-        if self.language:
-            d["language"] = self.language
-        if self.voice_id:
-            d["voice_id"] = self.voice_id
-        if self.sample_rate:
-            d["sample_rate"] = self.sample_rate
+        if self.temperature is not None:
+            d["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            d["max_tokens"] = self.max_tokens
         return d
 
 
@@ -98,24 +99,6 @@ class PongMessage(BaseMessage):
 
 
 @dataclass
-class ASRResultMessage(BaseMessage):
-    type: str = ServerMessageType.ASR_RESULT.value
-    text: str = ""
-    is_final: bool = False
-    segment_id: Optional[str] = None
-    is_speaking: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        d = super().to_dict()
-        d["text"] = self.text
-        d["is_final"] = self.is_final
-        d["is_speaking"] = self.is_speaking
-        if self.segment_id:
-            d["segment_id"] = self.segment_id
-        return d
-
-
-@dataclass
 class ToolCall:
     name: str
     arguments: dict[str, Any]
@@ -138,18 +121,6 @@ class LLMResponseMessage(BaseMessage):
                 {"name": tc.name, "arguments": tc.arguments, "call_id": tc.call_id}
                 for tc in self.tool_calls
             ]
-        return d
-
-
-@dataclass
-class TTSAudioMessage(BaseMessage):
-    type: str = ServerMessageType.TTS_AUDIO.value
-    data: bytes = b""
-    is_final: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        d = super().to_dict()
-        d["is_final"] = self.is_final
         return d
 
 
@@ -206,13 +177,13 @@ def parse_client_message(data: str | bytes) -> dict[str, Any]:
         try:
             data = data.decode("utf-8")
         except UnicodeDecodeError:
-            return {"type": ClientMessageType.AUDIO_DATA.value, "data": data}
+            return {"type": None, "error": "Binary data not supported"}
 
     try:
         msg = json.loads(data)
         return msg
     except json.JSONDecodeError:
-        return {"type": ClientMessageType.AUDIO_DATA.value, "data": data}
+        return {"type": None, "error": "Invalid JSON"}
 
 
 def create_error_message(

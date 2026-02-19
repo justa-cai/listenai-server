@@ -12,7 +12,6 @@ from .protocol import (
     ClientMessageType,
     ErrorCode,
     parse_client_message,
-    ASRResultMessage,
     LLMResponseMessage,
     PongMessage,
     ToolCallMessage,
@@ -20,10 +19,7 @@ from .protocol import (
     create_status_message,
 )
 from .session import SessionManager, Session
-from .audio_buffer import FrameBuffer
-from .asr_client import ASRClient
 from .llm_client import LLMClient
-from .tts_client import TTSClient
 from .mcp_manager import MCPToolManager
 
 logger = logging.getLogger(__name__)
@@ -35,35 +31,22 @@ class ClientConnection:
         websocket: Any,
         session: Session,
         config: Config,
-        asr_client: ASRClient,
         llm_client: LLMClient,
-        tts_client: TTSClient,
         mcp_manager: Optional[MCPToolManager],
     ):
         self.websocket = websocket
         self.session = session
         self.config = config
-        self.asr_client = asr_client
         self.llm_client = llm_client
-        self.tts_client = tts_client
         self.mcp_manager = mcp_manager
-        self.frame_buffer = FrameBuffer(frame_size=config.audio.frame_size)
         self.is_processing = False
-        self.audio_queue: list[bytes] = []
         self._lock = asyncio.Lock()
-        self.last_asr_text = ""
 
     async def send_json(self, message: dict[str, Any]) -> None:
         try:
             await self.websocket.send(json.dumps(message))
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
-
-    async def send_binary(self, data: bytes) -> None:
-        try:
-            await self.websocket.send(data)
-        except Exception as e:
-            logger.error(f"Failed to send binary data: {e}")
 
 
 class CloudServer:
@@ -97,10 +80,10 @@ class CloudServer:
             self.config.server.port,
             ping_interval=self.config.server.ping_interval,
             ping_timeout=self.config.server.ping_timeout,
-            max_size=10 * 1024 * 1024,
+            max_size=1024 * 1024,
         ):
             logger.info(
-                f"Cloud server started on {self.config.server.host}:{self.config.server.port}"
+                f"Cloud server (LLM Gateway) started on {self.config.server.host}:{self.config.server.port}"
             )
 
             asyncio.create_task(self._cleanup_task())
@@ -130,37 +113,19 @@ class CloudServer:
         logger.info(f"New connection from {client_addr}, id={connection_id}")
 
         session = self.session_manager.create_session()
-
-        asr_client = ASRClient(self.config.asr)
         llm_client = LLMClient(self.config.llm, self.mcp_manager)
-        tts_client = TTSClient(self.config.tts)
 
         conn = ClientConnection(
             websocket=websocket,
             session=session,
             config=self.config,
-            asr_client=asr_client,
             llm_client=llm_client,
-            tts_client=tts_client,
             mcp_manager=self.mcp_manager,
         )
 
         self._connections[connection_id] = conn
 
-        asr_client.on_result(
-            lambda result: asyncio.create_task(self._handle_asr_result(conn, result))
-        )
-
-        tts_client.on_audio(
-            lambda data, is_final: asyncio.create_task(
-                self._handle_tts_audio(conn, data, is_final)
-            )
-        )
-
         try:
-            await asr_client.connect()
-            await tts_client.connect()
-
             await conn.send_json(
                 create_status_message(
                     "connected", {"session_id": session.session_id}
@@ -180,8 +145,6 @@ class CloudServer:
                 ).to_dict()
             )
         finally:
-            await asr_client.disconnect()
-            await tts_client.disconnect()
             await llm_client.close()
             self.session_manager.end_session(session.session_id)
             if connection_id in self._connections:
@@ -190,30 +153,26 @@ class CloudServer:
 
     async def _handle_message(self, conn: ClientConnection, message: Any) -> None:
         try:
-            if isinstance(message, bytes):
-                await self._handle_audio_data(conn, message)
-            else:
-                msg_data = parse_client_message(message)
-                msg_type = msg_data.get("type")
+            msg_data = parse_client_message(message)
+            msg_type = msg_data.get("type")
 
-                if msg_type == ClientMessageType.AUDIO_DATA.value:
-                    if "data" in msg_data and isinstance(msg_data["data"], bytes):
-                        await self._handle_audio_data(conn, msg_data["data"])
-                elif msg_type == ClientMessageType.CONFIGURE.value:
-                    await self._handle_configure(conn, msg_data)
-                elif msg_type == ClientMessageType.START_SESSION.value:
-                    await self._handle_start_session(conn, msg_data)
-                elif msg_type == ClientMessageType.END_SESSION.value:
-                    await self._handle_end_session(conn)
-                elif msg_type == ClientMessageType.PING.value:
-                    await self._handle_ping(conn)
-                else:
-                    await conn.send_json(
-                        create_error_message(
-                            ErrorCode.UNKNOWN_MESSAGE_TYPE,
-                            f"Unknown message type: {msg_type}",
-                        ).to_dict()
-                    )
+            if msg_type == ClientMessageType.TEXT_INPUT.value:
+                await self._handle_text_input(conn, msg_data)
+            elif msg_type == ClientMessageType.CONFIGURE.value:
+                await self._handle_configure(conn, msg_data)
+            elif msg_type == ClientMessageType.START_SESSION.value:
+                await self._handle_start_session(conn, msg_data)
+            elif msg_type == ClientMessageType.END_SESSION.value:
+                await self._handle_end_session(conn)
+            elif msg_type == ClientMessageType.PING.value:
+                await self._handle_ping(conn)
+            else:
+                await conn.send_json(
+                    create_error_message(
+                        ErrorCode.UNKNOWN_MESSAGE_TYPE,
+                        f"Unknown message type: {msg_type}",
+                    ).to_dict()
+                )
 
         except json.JSONDecodeError:
             await conn.send_json(
@@ -233,45 +192,32 @@ class CloudServer:
                 ).to_dict()
             )
 
-    async def _handle_audio_data(self, conn: ClientConnection, data: bytes) -> None:
-        conn.frame_buffer.append(data)
-        frames = conn.frame_buffer.extract_frames()
-
-        if conn.is_processing:
-            conn.audio_queue.extend(frames)
+    async def _handle_text_input(
+        self, conn: ClientConnection, data: dict[str, Any]
+    ) -> None:
+        text = data.get("text", "")
+        if not text:
+            await conn.send_json(
+                create_error_message(
+                    ErrorCode.INVALID_MESSAGE, "text field is required"
+                ).to_dict()
+            )
             return
 
-        for frame in frames:
-            if conn.asr_client.is_connected:
-                await conn.asr_client.send_audio(frame)
+        session_id = data.get("session_id")
+        if session_id:
+            existing = self.session_manager.restore_session(session_id)
+            if existing:
+                conn.session = existing
 
-    async def _handle_asr_result(
-        self, conn: ClientConnection, result: dict[str, Any]
-    ) -> None:
-        text = result.get("text", "")
-        is_final = result.get("is_final", False)
-        is_speaking = result.get("is_speaking", False)
-        segment_id = result.get("segment_id")
-
-        await conn.send_json(
-            ASRResultMessage(
-                text=text,
-                is_final=is_final,
-                is_speaking=is_speaking,
-                segment_id=segment_id,
-            ).to_dict()
-        )
-
-        if is_final and text:
-            conn.last_asr_text = text
-            await self._process_user_input(conn, text)
-
-    async def _process_user_input(self, conn: ClientConnection, text: str) -> None:
         async with conn._lock:
             if conn.is_processing:
-                logger.debug("Already processing, queuing audio")
+                await conn.send_json(
+                    create_status_message(
+                        "busy", {"message": "Already processing"}
+                    ).to_dict()
+                )
                 return
-
             conn.is_processing = True
 
         try:
@@ -287,7 +233,6 @@ class CloudServer:
                 content = conn.llm_client.extract_content(response)
                 tool_calls = conn.llm_client.extract_tool_calls(response)
 
-                tool_call_msgs = []
                 for tc in tool_calls:
                     func = tc.get("function", {})
                     tool_name = func.get("name", "")
@@ -300,7 +245,6 @@ class CloudServer:
                     tool_msg = ToolCallMessage(
                         tool_name=tool_name, arguments=args, result=None, success=True
                     )
-                    tool_call_msgs.append(tool_msg)
                     await conn.send_json(tool_msg.to_dict())
 
                 await conn.send_json(
@@ -311,9 +255,6 @@ class CloudServer:
 
                 conn.session.add_message("assistant", content)
                 conn.session.end_interaction(text, content)
-
-                if content and conn.tts_client.is_connected:
-                    await conn.tts_client.synthesize(content)
 
             except Exception as e:
                 logger.error(f"LLM processing error: {e}")
@@ -326,38 +267,24 @@ class CloudServer:
         finally:
             conn.is_processing = False
 
-            if conn.audio_queue:
-                frames = conn.audio_queue.copy()
-                conn.audio_queue.clear()
-                for frame in frames:
-                    if conn.asr_client.is_connected:
-                        await conn.asr_client.send_audio(frame)
-
-    async def _handle_tts_audio(
-        self, conn: ClientConnection, data: bytes, is_final: bool
-    ) -> None:
-        if data:
-            logger.debug(f"Forwarding TTS audio to client: {len(data)} bytes")
-            await conn.send_binary(data)
-
-        if is_final:
-            logger.info("TTS audio stream complete")
-            await conn.send_json(create_status_message("audio_complete").to_dict())
-
     async def _handle_configure(
         self, conn: ClientConnection, data: dict[str, Any]
     ) -> None:
-        language = data.get("language")
-        voice_id = data.get("voice_id")
+        temperature = data.get("temperature")
+        max_tokens = data.get("max_tokens")
 
-        if language:
-            conn.config.server.log_level = language
-        if voice_id:
-            conn.config.tts.voice_id = voice_id
+        if temperature is not None:
+            conn.config.llm.temperature = float(temperature)
+        if max_tokens is not None:
+            conn.config.llm.max_tokens = int(max_tokens)
 
         await conn.send_json(
             create_status_message(
-                "configured", {"language": language, "voice_id": voice_id}
+                "configured",
+                {
+                    "temperature": conn.config.llm.temperature,
+                    "max_tokens": conn.config.llm.max_tokens,
+                },
             ).to_dict()
         )
 
@@ -387,7 +314,6 @@ class CloudServer:
         self.session_manager.end_session(conn.session.session_id)
         new_session = self.session_manager.create_session()
         conn.session = new_session
-        conn.last_asr_text = ""
 
         await conn.send_json(
             create_status_message(
@@ -399,7 +325,7 @@ class CloudServer:
         await conn.send_json(PongMessage().to_dict())
 
 
-async def run_http_server(config: Config, port: int = 8080):
+async def run_http_server(config: Config, port: int = 9401):
     app = web.Application()
 
     cloud_dir = Path(__file__).parent.parent
@@ -414,7 +340,7 @@ async def run_http_server(config: Config, port: int = 8080):
 
     async def health_check(request: web.Request) -> web.Response:
         return web.Response(
-            text=json.dumps({"status": "healthy", "service": "cloud-agent"}),
+            text=json.dumps({"status": "healthy", "service": "cloud-agent-v1.1"}),
             content_type="application/json",
         )
 
