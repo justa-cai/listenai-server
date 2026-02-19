@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ListenAI Cloud Agent Test Client</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #4fc3f7;
+            margin-bottom: 20px;
+            font-size: 2em;
+        }
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .panel h2 {
+            color: #81d4fa;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        .connection-panel {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .connection-panel input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px 15px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-size: 14px;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #4fc3f7;
+            color: #1a1a2e;
+        }
+        .btn-primary:hover {
+            background: #81d4fa;
+        }
+        .btn-danger {
+            background: #ef5350;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background: #ff8a80;
+        }
+        .btn-success {
+            background: #66bb6a;
+            color: #fff;
+        }
+        .btn-success:hover {
+            background: #81c784;
+        }
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            border-radius: 20px;
+            background: rgba(0, 0, 0, 0.3);
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ef5350;
+        }
+        .status-dot.connected {
+            background: #66bb6a;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+            height: calc(100vh - 180px);
+        }
+        @media (max-width: 900px) {
+            .main-content {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+        }
+        .messages-panel {
+            height: 100%;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+        }
+        @media (max-width: 900px) {
+            .messages-panel {
+                min-height: 400px;
+                max-height: 50vh;
+            }
+        }
+        .message {
+            padding: 10px 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .message-system {
+            background: rgba(79, 195, 247, 0.2);
+            border-left: 3px solid #4fc3f7;
+        }
+        .message-asr {
+            background: rgba(171, 71, 188, 0.2);
+            border-left: 3px solid #ab47bc;
+        }
+        .message-llm {
+            background: rgba(255, 167, 38, 0.2);
+            border-left: 3px solid #ffa726;
+        }
+        .message-error {
+            background: rgba(239, 83, 80, 0.2);
+            border-left: 3px solid #ef5350;
+        }
+        .message-tool {
+            background: rgba(102, 187, 106, 0.2);
+            border-left: 3px solid #66bb6a;
+        }
+        .message-time {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        .controls-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .recording-section {
+            text-align: center;
+        }
+        .record-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 4px solid #66bb6a;
+            background: rgba(102, 187, 106, 0.2);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 15px;
+        }
+        .record-btn:hover {
+            background: rgba(102, 187, 106, 0.4);
+        }
+        .record-btn.recording {
+            border-color: #ef5350;
+            background: rgba(239, 83, 80, 0.3);
+            animation: recording-pulse 1s infinite;
+        }
+        @keyframes recording-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        .record-btn svg {
+            width: 30px;
+            height: 30px;
+            fill: #66bb6a;
+        }
+        .record-btn.recording svg {
+            fill: #ef5350;
+        }
+        .visualizer {
+            height: 60px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .audio-player {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .config-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .config-section label {
+            font-size: 12px;
+            color: #888;
+        }
+        .config-section select,
+        .config-section input {
+            padding: 8px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-size: 13px;
+        }
+        .stats-panel {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .stat-item {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4fc3f7;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #888;
+            margin-top: 5px;
+        }
+        .clear-btn {
+            width: 100%;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ListenAI Cloud Agent Test Client</h1>
+
+        <div class="panel">
+            <div class="connection-panel">
+                <input type="text" id="wsUrl" placeholder="WebSocket URL" value="ws://localhost:9400">
+                <div class="status-indicator">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Disconnected</span>
+                </div>
+                <button class="btn btn-primary" id="connectBtn">Connect</button>
+                <button class="btn btn-danger" id="disconnectBtn" style="display: none;">Disconnect</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="panel">
+                <h2>Messages</h2>
+                <div class="messages-panel" id="messagesPanel"></div>
+            </div>
+
+            <div class="controls-panel">
+                <div class="panel recording-section">
+                    <h2>Voice Input</h2>
+                    <canvas class="visualizer" id="visualizer"></canvas>
+                    <button class="record-btn" id="recordBtn">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/>
+                        </svg>
+                    </button>
+                    <p id="recordingStatus">Click to start recording</p>
+                </div>
+
+                <div class="panel">
+                    <h2>Audio Output</h2>
+                    <audio class="audio-player" id="audioPlayer" controls></audio>
+                </div>
+
+                <div class="panel config-section">
+                    <h2>Configuration</h2>
+                    <label>Language</label>
+                    <select id="languageSelect">
+                        <option value="zh">Chinese</option>
+                        <option value="en">English</option>
+                        <option value="ja">Japanese</option>
+                    </select>
+                    <label>Voice ID (optional)</label>
+                    <input type="text" id="voiceId" value="" placeholder="Leave empty for default">
+                    <button class="btn btn-success" id="applyConfigBtn">Apply Settings</button>
+                </div>
+
+                <div class="panel">
+                    <h2>Statistics</h2>
+                    <div class="stats-panel">
+                        <div class="stat-item">
+                            <div class="stat-value" id="msgCount">0</div>
+                            <div class="stat-label">Messages</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="toolCount">0</div>
+                            <div class="stat-label">Tool Calls</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="sessionTime">0:00</div>
+                            <div class="stat-label">Session Time</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="avgLatency">0</div>
+                            <div class="stat-label">Avg Latency (ms)</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger clear-btn" id="clearBtn">Clear Messages</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class CloudTestClient {
+            constructor() {
+                this.ws = null;
+                this.isConnected = false;
+                this.mediaRecorder = null;
+                this.audioContext = null;
+                this.analyser = null;
+                this.isRecording = false;
+                this.isPlaying = false;
+                this.audioChunks = [];
+                this.messageCount = 0;
+                this.toolCallCount = 0;
+                this.sessionStartTime = null;
+                this.latencies = [];
+                this.audioQueue = [];
+                this.currentAudioSource = null;
+
+                this.initElements();
+                this.initEventListeners();
+                this.startSessionTimer();
+                this.initVisualizer();
+            }
+
+            initElements() {
+                this.wsUrlInput = document.getElementById('wsUrl');
+                this.connectBtn = document.getElementById('connectBtn');
+                this.disconnectBtn = document.getElementById('disconnectBtn');
+                this.statusDot = document.getElementById('statusDot');
+                this.statusText = document.getElementById('statusText');
+                this.messagesPanel = document.getElementById('messagesPanel');
+                this.recordBtn = document.getElementById('recordBtn');
+                this.recordingStatus = document.getElementById('recordingStatus');
+                this.visualizerCanvas = document.getElementById('visualizer');
+                this.audioPlayer = document.getElementById('audioPlayer');
+                this.languageSelect = document.getElementById('languageSelect');
+                this.voiceIdInput = document.getElementById('voiceId');
+                this.applyConfigBtn = document.getElementById('applyConfigBtn');
+                this.msgCountEl = document.getElementById('msgCount');
+                this.toolCountEl = document.getElementById('toolCount');
+                this.sessionTimeEl = document.getElementById('sessionTime');
+                this.avgLatencyEl = document.getElementById('avgLatency');
+                this.clearBtn = document.getElementById('clearBtn');
+            }
+
+            initEventListeners() {
+                this.connectBtn.addEventListener('click', () => this.connect());
+                this.disconnectBtn.addEventListener('click', () => this.disconnect());
+                this.recordBtn.addEventListener('click', () => this.toggleRecording());
+                this.applyConfigBtn.addEventListener('click', () => this.applyConfig());
+                this.clearBtn.addEventListener('click', () => this.clearMessages());
+            }
+
+            initVisualizer() {
+                const canvas = this.visualizerCanvas;
+                const ctx = canvas.getContext('2d');
+                canvas.width = canvas.offsetWidth;
+                canvas.height = canvas.offsetHeight;
+
+                const draw = () => {
+                    requestAnimationFrame(draw);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    if (this.analyser && this.isRecording) {
+                        const bufferLength = this.analyser.frequencyBinCount;
+                        const dataArray = new Uint8Array(bufferLength);
+                        this.analyser.getByteFrequencyData(dataArray);
+
+                        const barWidth = (canvas.width / bufferLength) * 2.5;
+                        let x = 0;
+
+                        for (let i = 0; i < bufferLength; i++) {
+                            const barHeight = (dataArray[i] / 255) * canvas.height;
+                            ctx.fillStyle = `rgba(79, 195, 247, ${dataArray[i] / 255})`;
+                            ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                            x += barWidth + 1;
+                        }
+                    }
+                };
+                draw();
+            }
+
+            startSessionTimer() {
+                this.sessionStartTime = Date.now();
+                setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = elapsed % 60;
+                    this.sessionTimeEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                }, 1000);
+            }
+
+            async connect() {
+                const url = this.wsUrlInput.value;
+                try {
+                    this.ws = new WebSocket(url);
+                    this.ws.binaryType = 'arraybuffer';
+
+                    this.ws.onopen = () => {
+                        this.isConnected = true;
+                        this.updateConnectionStatus(true);
+                        this.addMessage('system', 'Connected to server');
+                    };
+
+                    this.ws.onmessage = (event) => {
+                        if (event.data instanceof ArrayBuffer) {
+                            this.handleBinaryMessage(event.data);
+                        } else {
+                            this.handleJsonMessage(JSON.parse(event.data));
+                        }
+                    };
+
+                    this.ws.onclose = () => {
+                        this.isConnected = false;
+                        this.updateConnectionStatus(false);
+                        this.addMessage('system', 'Disconnected from server');
+                    };
+
+                    this.ws.onerror = (error) => {
+                        this.addMessage('error', 'WebSocket error: Connection failed');
+                    };
+
+                } catch (error) {
+                    this.addMessage('error', `Connection failed: ${error.message}`);
+                }
+            }
+
+            disconnect() {
+                if (this.ws) {
+                    this.ws.close();
+                    this.ws = null;
+                }
+                this.isConnected = false;
+                this.updateConnectionStatus(false);
+            }
+
+            updateConnectionStatus(connected) {
+                if (connected) {
+                    this.statusDot.classList.add('connected');
+                    this.statusText.textContent = 'Connected';
+                    this.connectBtn.style.display = 'none';
+                    this.disconnectBtn.style.display = 'inline-block';
+                } else {
+                    this.statusDot.classList.remove('connected');
+                    this.statusText.textContent = 'Disconnected';
+                    this.connectBtn.style.display = 'inline-block';
+                    this.disconnectBtn.style.display = 'none';
+                }
+            }
+
+            handleJsonMessage(data) {
+                const type = data.type;
+                this.messageCount++;
+                this.msgCountEl.textContent = this.messageCount;
+
+                switch (type) {
+                    case 'asr_result':
+                        this.addMessage('asr', `[ASR] ${data.is_final ? 'Final' : 'Partial'}: ${data.text}`);
+                        break;
+                    case 'llm_response':
+                        this.addMessage('llm', `[LLM] ${data.content}`);
+                        break;
+                    case 'tool_call':
+                        this.toolCallCount++;
+                        this.toolCountEl.textContent = this.toolCallCount;
+                        this.addMessage('tool', `[Tool] ${data.tool_name}(${JSON.stringify(data.arguments)}) -> ${JSON.stringify(data.result)}`);
+                        break;
+                    case 'status':
+                        this.addMessage('system', `[Status] ${data.status}`);
+                        break;
+                    case 'error':
+                        this.addMessage('error', `[Error] ${data.code}: ${data.message}`);
+                        break;
+                    case 'pong':
+                        this.addMessage('system', '[Pong] Server responded');
+                        break;
+                }
+            }
+
+            handleBinaryMessage(data) {
+                const pcmData = new Uint8Array(data);
+                this.audioQueue.push(pcmData);
+                if (this.audioQueue.length === 1) {
+                    this.addMessage('system', '[TTS] Playing audio...');
+                }
+                if (!this.isPlaying) {
+                    this.startStreamingPlayback();
+                }
+            }
+
+            startStreamingPlayback() {
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                if (this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+
+                this.isPlaying = true;
+                this._nextPlayTime = this.audioContext.currentTime;
+                this._sampleRate = 16000;
+
+                const playNextChunk = () => {
+                    if (!this.isPlaying || this.audioQueue.length === 0) {
+                        if (this.audioQueue.length === 0) {
+                            this.isPlaying = false;
+                        }
+                        return;
+                    }
+
+                    const pcmBytes = this.audioQueue.shift();
+                    const audioData = new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength / 2);
+
+                    const float32Buffer = new Float32Array(audioData.length);
+                    for (let i = 0; i < audioData.length; i++) {
+                        float32Buffer[i] = audioData[i] / 32768.0;
+                    }
+
+                    const audioBuffer = this.audioContext.createBuffer(1, float32Buffer.length, this._sampleRate);
+                    audioBuffer.getChannelData(0).set(float32Buffer);
+
+                    let startTime = this._nextPlayTime;
+                    const currentTime = this.audioContext.currentTime;
+                    if (startTime < currentTime) {
+                        startTime = currentTime;
+                    }
+
+                    const source = this.audioContext.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(this.audioContext.destination);
+                    source.start(startTime);
+
+                    this._nextPlayTime = startTime + audioBuffer.duration;
+                    this.currentSource = source;
+
+                    source.onended = () => {
+                        setTimeout(playNextChunk, 0);
+                    };
+                };
+
+                playNextChunk();
+            }
+
+            addMessage(type, text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message message-${type}`;
+
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'message-time';
+                timeDiv.textContent = new Date().toLocaleTimeString();
+
+                const textDiv = document.createElement('div');
+                textDiv.textContent = text;
+
+                messageDiv.appendChild(timeDiv);
+                messageDiv.appendChild(textDiv);
+
+                this.messagesPanel.appendChild(messageDiv);
+                this.messagesPanel.scrollTop = this.messagesPanel.scrollHeight;
+            }
+
+            async toggleRecording() {
+                if (this.isRecording) {
+                    this.stopRecording();
+                } else {
+                    await this.startRecording();
+                }
+            }
+
+            async startRecording() {
+                if (!this.isConnected) {
+                    this.addMessage('error', 'Not connected to server');
+                    return;
+                }
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            sampleRate: 16000
+                        }
+                    });
+
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 16000
+                    });
+                    this.analyser = this.audioContext.createAnalyser();
+                    const source = this.audioContext.createMediaStreamSource(stream);
+                    source.connect(this.analyser);
+                    this.analyser.fftSize = 256;
+
+                    const bufferSize = 4096;
+                    const scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
+                    source.connect(scriptProcessor);
+                    scriptProcessor.connect(this.audioContext.destination);
+
+                    scriptProcessor.onaudioprocess = (e) => {
+                        if (this.isRecording && this.ws && this.ws.readyState === WebSocket.OPEN) {
+                            const inputData = e.inputBuffer.getChannelData(0);
+                            const pcmData = this.float32ToIn16(inputData);
+                            this.ws.send(pcmData);
+                        }
+                    };
+
+                    this.mediaStream = stream;
+                    this.scriptProcessor = scriptProcessor;
+                    this.isRecording = true;
+                    this.recordBtn.classList.add('recording');
+                    this.recordingStatus.textContent = 'Recording... Click to stop';
+
+                } catch (error) {
+                    this.addMessage('error', `Microphone access denied: ${error.message}`);
+                }
+            }
+
+            stopRecording() {
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                }
+                if (this.scriptProcessor) {
+                    this.scriptProcessor.disconnect();
+                }
+                this.isRecording = false;
+                this.recordBtn.classList.remove('recording');
+                this.recordingStatus.textContent = 'Click to start recording';
+            }
+
+            float32ToIn16(float32Array) {
+                const buffer = new ArrayBuffer(float32Array.length * 2);
+                const view = new DataView(buffer);
+                for (let i = 0; i < float32Array.length; i++) {
+                    let s = Math.max(-1, Math.min(1, float32Array[i]));
+                    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                }
+                return buffer;
+            }
+
+            applyConfig() {
+                if (!this.isConnected) {
+                    this.addMessage('error', 'Not connected to server');
+                    return;
+                }
+
+                const config = {
+                    type: 'configure',
+                    language: this.languageSelect.value
+                };
+
+                const voiceId = this.voiceIdInput.value.trim();
+                if (voiceId) {
+                    config.voice_id = voiceId;
+                }
+
+                this.ws.send(JSON.stringify(config));
+                this.addMessage('system', 'Configuration applied');
+            }
+
+            clearMessages() {
+                this.messagesPanel.innerHTML = '';
+                this.messageCount = 0;
+                this.toolCallCount = 0;
+                this.msgCountEl.textContent = '0';
+                this.toolCountEl.textContent = '0';
+                this.latencies = [];
+                this.avgLatencyEl.textContent = '0';
+            }
+        }
+
+        const client = new CloudTestClient();
+    </script>
+</body>
+</html>
