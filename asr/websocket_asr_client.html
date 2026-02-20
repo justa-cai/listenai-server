@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket ASR 测试客户端</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-label {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .status-value {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .status-value.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-value.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-value.recording {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-value.silence {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .control-panel {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .input-group {
+            flex: 1;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+            font-size: 14px;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-danger:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .results-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .results-header {
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        .result-item {
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            background: white;
+            border-left: 4px solid #667eea;
+            animation: slideIn 0.3s ease;
+        }
+
+        .result-item.final {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+
+        .result-item.error {
+            border-left-color: #dc3545;
+            background: #f8d7da;
+        }
+
+        .result-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+
+        .result-text {
+            font-size: 16px;
+            color: #212529;
+            line-height: 1.5;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #6c757d;
+            padding: 40px;
+        }
+
+        .empty-state svg {
+            width: 60px;
+            height: 60px;
+            margin-bottom: 15px;
+            opacity: 0.5;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .recording-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #dc3545;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .clear-btn {
+            background: none;
+            border: none;
+            color: #6c757d;
+            cursor: pointer;
+            font-size: 13px;
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        .clear-btn:hover {
+            background: #dee2e6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 WebSocket ASR 测试客户端</h1>
+            <p>实时语音识别 | VAD自动分段 | 流式输出</p>
+        </div>
+
+        <div class="content">
+            <div class="status-bar">
+                <div class="status-item">
+                    <span class="status-label">连接状态:</span>
+                    <span class="status-value disconnected" id="connectionStatus">未连接</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">语音状态:</span>
+                    <span class="status-value silence" id="speechStatus">静音</span>
+                </div>
+            </div>
+
+            <div class="control-panel">
+                <div class="input-group">
+                    <label for="serverUrl">服务器地址</label>
+                    <input type="text" id="serverUrl" value="ws://localhost:9200" placeholder="ws://localhost:9200">
+                </div>
+                <div class="input-group">
+                    <label for="chunkSize">发送间隔 (ms)</label>
+                    <input type="number" id="chunkSize" value="200" min="10" max="1000" step="10">
+                </div>
+            </div>
+
+            <div class="buttons">
+                <button class="btn btn-primary" id="connectBtn" onclick="connect()">
+                    <span>🔗</span> 连接服务器
+                </button>
+                <button class="btn btn-danger" id="recordBtn" onclick="toggleRecording()" disabled>
+                    <span>🎤</span> 开始录音
+                </button>
+                <button class="btn btn-secondary" onclick="clearResults()">
+                    <span>🗑️</span> 清空结果
+                </button>
+            </div>
+
+            <div class="results-section">
+                <div class="results-header">
+                    识别结果 <button class="clear-btn" onclick="clearResults()">清空</button>
+                </div>
+                <div id="results">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 19V5M5 12l7-7 7 7"/>
+                        </svg>
+                        <p>等待识别结果...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let audioContext = null;
+        let mediaStream = null;
+        let scriptProcessor = null;
+        let isRecording = false;
+        let isConnecting = false;
+        let audioBuffer = [];
+
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const connectBtn = document.getElementById('connectBtn');
+            const connectionStatus = document.getElementById('connectionStatus');
+
+            if (isConnecting || (websocket && websocket.readyState === WebSocket.OPEN)) {
+                return;
+            }
+
+            isConnecting = true;
+            connectBtn.disabled = true;
+            connectBtn.innerHTML = '<span>⏳</span> 连接中...';
+
+            try {
+                websocket = new WebSocket(serverUrl);
+
+                websocket.onopen = () => {
+                    console.log('WebSocket连接已建立');
+                    connectionStatus.textContent = '已连接';
+                    connectionStatus.className = 'status-value connected';
+                    document.getElementById('recordBtn').disabled = false;
+                    connectBtn.innerHTML = '<span>🔗</span> 断开连接';
+                    connectBtn.onclick = disconnect;
+                    isConnecting = false;
+                    connectBtn.disabled = false;
+                };
+
+                websocket.onmessage = (event) => {
+                    try {
+                        const result = JSON.parse(event.data);
+                        displayResult(result);
+                    } catch (e) {
+                        console.error('解析消息失败:', e);
+                    }
+                };
+
+                websocket.onerror = (error) => {
+                    console.error('WebSocket错误:', error);
+                };
+
+                websocket.onclose = () => {
+                    console.log('WebSocket连接已关闭');
+                    connectionStatus.textContent = '未连接';
+                    connectionStatus.className = 'status-value disconnected';
+                    document.getElementById('recordBtn').disabled = true;
+                    document.getElementById('recordBtn').innerHTML = '<span>🎤</span> 开始录音';
+                    if (isRecording) {
+                        stopRecording();
+                    }
+                    connectBtn.innerHTML = '<span>🔗</span> 连接服务器';
+                    connectBtn.onclick = connect;
+                    isConnecting = false;
+                    connectBtn.disabled = false;
+                };
+            } catch (error) {
+                console.error('连接失败:', error);
+                alert('连接失败: ' + error.message);
+                isConnecting = false;
+                connectBtn.disabled = false;
+                connectBtn.innerHTML = '<span>🔗</span> 连接服务器';
+            }
+        }
+
+        function disconnect() {
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+        }
+
+        async function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                await startRecording();
+            }
+        }
+
+        async function startRecording() {
+            try {
+                const chunkSize = parseInt(document.getElementById('chunkSize').value) || 200;
+                const samplesPerChunk = Math.floor((16000 * chunkSize) / 1000);
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                audioContext = new AudioContext({
+                    sampleRate: 16000
+                });
+
+                const source = audioContext.createMediaStreamSource(mediaStream);
+
+                // Set buffer size based on user's interval setting
+                // bufferSize must be a power of 2: 256, 512, 1024, 2048, 4096, 8192, 16384
+                let bufferSize = samplesPerChunk;
+                // Round up to next power of 2
+                bufferSize = Math.pow(2, Math.ceil(Math.log2(bufferSize)));
+                // Ensure it's within valid range (256 - 16384)
+                bufferSize = Math.max(256, Math.min(16384, bufferSize));
+
+                console.log(`Send interval: ${chunkSize}ms, samples: ${samplesPerChunk}, buffer size: ${bufferSize}`);
+
+                scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+                scriptProcessor.onaudioprocess = (event) => {
+                    if (!isRecording || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                        return;
+                    }
+
+                    const inputData = event.inputBuffer.getChannelData(0);
+
+                    // Convert to PCM and send directly
+                    const pcmData = floatTo16BitPCM(inputData);
+
+                    // Send exactly the requested number of samples
+                    const dataToSend = pcmData.slice(0, samplesPerChunk);
+
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(dataToSend.buffer);
+                    }
+                };
+
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+
+                isRecording = true;
+                const recordBtn = document.getElementById('recordBtn');
+                recordBtn.innerHTML = '<span class="recording-indicator"></span> 停止录音';
+                recordBtn.className = 'btn btn-danger';
+
+                console.log('录音已开始');
+            } catch (error) {
+                console.error('启动录音失败:', error);
+                alert('无法访问麦克风: ' + error.message);
+            }
+        }
+
+        function stopRecording() {
+            isRecording = false;
+
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                scriptProcessor = null;
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+
+            const recordBtn = document.getElementById('recordBtn');
+            recordBtn.innerHTML = '<span>🎤</span> 开始录音';
+            recordBtn.className = 'btn btn-danger';
+
+            audioBuffer = [];
+
+            console.log('录音已停止');
+        }
+
+        function floatTo16BitPCM(input) {
+            const output = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+                let s = Math.max(-1, Math.min(1, input[i]));
+                output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            return output;
+        }
+
+        function displayResult(result) {
+            const resultsDiv = document.getElementById('results');
+            const emptyState = resultsDiv.querySelector('.empty-state');
+
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            const timestamp = new Date(result.timestamp);
+            const timeStr = timestamp.toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                fractionalSecondDigits: 3
+            });
+
+            const resultItem = document.createElement('div');
+            resultItem.className = 'result-item' + (result.is_final ? ' final' : '');
+
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'result-meta';
+            metaDiv.innerHTML = `
+                <span>${timeStr}</span>
+                <span>${result.is_final ? '✅ 最终结果' : '⏳ 实时结果'}</span>
+            `;
+
+            const textDiv = document.createElement('div');
+            textDiv.className = 'result-text';
+            textDiv.textContent = result.text || '(无识别内容)';
+
+            resultItem.appendChild(metaDiv);
+            resultItem.appendChild(textDiv);
+
+            resultsDiv.insertBefore(resultItem, resultsDiv.firstChild);
+
+            if (resultsDiv.children.length > 100) {
+                resultsDiv.removeChild(resultsDiv.lastChild);
+            }
+
+            const speechStatus = document.getElementById('speechStatus');
+            if (result.is_speeching !== undefined) {
+                if (result.is_speeching) {
+                    speechStatus.textContent = '正在说话';
+                    speechStatus.className = 'status-value recording';
+                } else {
+                    speechStatus.textContent = '静音';
+                    speechStatus.className = 'status-value silence';
+                }
+            }
+        }
+
+        function clearResults() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 19V5M5 12l7-7 7 7"/>
+                    </svg>
+                    <p>等待识别结果...</p>
+                </div>
+            `;
+            const speechStatus = document.getElementById('speechStatus');
+            speechStatus.textContent = '静音';
+            speechStatus.className = 'status-value silence';
+        }
+
+        window.onload = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const server = urlParams.get('server');
+            const chunk = urlParams.get('chunk');
+
+            if (server) {
+                document.getElementById('serverUrl').value = server;
+            }
+            if (chunk) {
+                document.getElementById('chunkSize').value = chunk;
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert('您的浏览器不支持麦克风访问，请使用现代浏览器（Chrome、Firefox、Edge等）。');
+            }
+        };
+    </script>
+</body>
+</html>
