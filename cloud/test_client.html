@@ -733,21 +733,61 @@
                     this.stats.tts++;
                     this.updateStats();
                     
-                    this.audioQueue.push({
+                    const chunk = {
                         data: parsed.audio,
                         sampleRate: parsed.sampleRate || 16000
-                    });
+                    };
                     
-                    if (this.audioQueue.length === 1) {
-                        this.addMessage('tts', '[TTS] Playing audio...');
+                    if (!this.playbackContext) {
+                        this.playbackContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    
+                    if (this.playbackContext.state === 'suspended') {
+                        this.playbackContext.resume();
                     }
                     
                     if (!this.isPlaying) {
-                        this.startStreamingPlayback();
+                        this.isPlaying = true;
+                        this._nextPlayTime = this.playbackContext.currentTime;
+                        this.addMessage('tts', '[TTS] Playing audio...');
                     }
+                    
+                    this.audioQueue.push(chunk);
+                    
+                    while (this.audioQueue.length > 0) {
+                        const currentChunk = this.audioQueue.shift();
+                        const audioData = currentChunk.data;
+                        const sampleRate = currentChunk.sampleRate || 16000;
+                        
+                        if (!audioData || audioData.length === 0) {
+                            continue;
+                        }
+                        
+                        const float32Buffer = new Float32Array(audioData.length);
+                        for (let i = 0; i < audioData.length; i++) {
+                            float32Buffer[i] = audioData[i] / 32768.0;
+                        }
+                        
+                        const audioBuffer = this.playbackContext.createBuffer(1, float32Buffer.length, sampleRate);
+                        audioBuffer.getChannelData(0).set(float32Buffer);
+                        
+                        let startTime = this._nextPlayTime;
+                        const currentTime = this.playbackContext.currentTime;
+                        if (startTime < currentTime) {
+                            startTime = currentTime;
+                        }
+                        
+                        const source = this.playbackContext.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(this.playbackContext.destination);
+                        source.start(startTime);
+                        
+                        this._nextPlayTime = startTime + audioBuffer.duration;
+                    }
+                    
                 } else if (parsed && parsed.metadata) {
-                    // Frame parsed but no audio data (could be a control frame)
                     if (parsed.metadata.is_final) {
+                        this.isPlaying = false;
                         this.addMessage('tts', '[TTS] Audio stream complete');
                     }
                 }
@@ -819,6 +859,45 @@
                 }
             }
             
+            scheduleChunk(chunk) {
+                const audioData = chunk.data;
+                const sampleRate = chunk.sampleRate || 16000;
+                
+                if (!audioData || audioData.length === 0) {
+                    return;
+                }
+                
+                const float32Buffer = new Float32Array(audioData.length);
+                for (let i = 0; i < audioData.length; i++) {
+                    float32Buffer[i] = audioData[i] / 32768.0;
+                }
+                
+                const audioBuffer = this.playbackContext.createBuffer(1, float32Buffer.length, sampleRate);
+                audioBuffer.getChannelData(0).set(float32Buffer);
+                
+                let startTime = this._nextPlayTime;
+                const currentTime = this.playbackContext.currentTime;
+                if (startTime < currentTime) {
+                    startTime = currentTime;
+                }
+                
+                const source = this.playbackContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(this.playbackContext.destination);
+                source.start(startTime);
+                
+                this._nextPlayTime = startTime + audioBuffer.duration;
+                
+                source.onended = () => {
+                    if (this.audioQueue.length > 0) {
+                        const nextChunk = this.audioQueue.shift();
+                        this.scheduleChunk(nextChunk);
+                    } else {
+                        this.isPlaying = false;
+                    }
+                };
+            }
+            
             startStreamingPlayback() {
                 if (!this.playbackContext) {
                     this.playbackContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -831,50 +910,10 @@
                 this.isPlaying = true;
                 this._nextPlayTime = this.playbackContext.currentTime;
                 
-                const playNextChunk = () => {
-                    if (!this.isPlaying || this.audioQueue.length === 0) {
-                        if (this.audioQueue.length === 0) {
-                            this.isPlaying = false;
-                        }
-                        return;
-                    }
-                    
-                    const chunk = this.audioQueue.shift();
-                    const audioData = chunk.data;
-                    const sampleRate = chunk.sampleRate || 16000;
-                    
-                    if (!audioData || audioData.length === 0) {
-                        setTimeout(playNextChunk, 0);
-                        return;
-                    }
-                    
-                    const float32Buffer = new Float32Array(audioData.length);
-                    for (let i = 0; i < audioData.length; i++) {
-                        float32Buffer[i] = audioData[i] / 32768.0;
-                    }
-                    
-                    const audioBuffer = this.playbackContext.createBuffer(1, float32Buffer.length, sampleRate);
-                    audioBuffer.getChannelData(0).set(float32Buffer);
-                    
-                    let startTime = this._nextPlayTime;
-                    const currentTime = this.playbackContext.currentTime;
-                    if (startTime < currentTime) {
-                        startTime = currentTime;
-                    }
-                    
-                    const source = this.playbackContext.createBufferSource();
-                    source.buffer = audioBuffer;
-                    source.connect(this.playbackContext.destination);
-                    source.start(startTime);
-                    
-                    this._nextPlayTime = startTime + audioBuffer.duration;
-                    
-                    source.onended = () => {
-                        setTimeout(playNextChunk, 0);
-                    };
-                };
-                
-                playNextChunk();
+                if (this.audioQueue.length > 0) {
+                    const firstChunk = this.audioQueue.shift();
+                    this.scheduleChunk(firstChunk);
+                }
             }
             
             sendToTTS(text) {
