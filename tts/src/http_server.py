@@ -1,6 +1,7 @@
 """HTTP server for serving the web client interface."""
 
 import os
+import asyncio
 import logging
 from aiohttp import web
 from typing import Optional
@@ -176,8 +177,11 @@ class HTTPWebServer:
     async def stop(self):
         """Stop the HTTP server."""
         if self._runner:
-            await self._runner.cleanup()
-            logger.info("HTTP web server stopped")
+            try:
+                await asyncio.wait_for(self._runner.cleanup(), timeout=1.0)
+                logger.info("HTTP web server stopped")
+            except asyncio.TimeoutError:
+                logger.warning("HTTP server cleanup timed out")
 
     def get_url(self) -> str:
         """Get the server URL."""

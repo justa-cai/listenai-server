@@ -88,7 +88,8 @@ class TTSRequestTask:
         session: Session,
         model_config: ModelConfig,
         connection: Connection,
-        server_config: "ServerConfig" = None
+        server_config: "ServerConfig" = None,
+        inference_lock: asyncio.Lock = None
     ):
         """
         Initialize the TTS request task.
@@ -98,6 +99,7 @@ class TTSRequestTask:
             model_config: Model configuration
             connection: Connection object for sending responses
             server_config: Server configuration (optional)
+            inference_lock: Optional lock to prevent concurrent model inference
         """
         self.session = session
         self.model_config = model_config
@@ -107,6 +109,7 @@ class TTSRequestTask:
         self._cancelled = False
         self._model_cache: Optional[ModelCache] = None
         self._debug_audio_chunks = []  # Accumulate sent audio for debug
+        self._inference_lock = inference_lock
 
     async def run(self) -> None:
         """Run the TTS task."""
@@ -192,6 +195,10 @@ class TTSRequestTask:
             )
 
         try:
+            # Acquire inference lock before running model inference
+            if self._inference_lock:
+                await self._inference_lock.acquire()
+
             # Run the generator in executor to avoid blocking event loop
             loop = asyncio.get_event_loop()
             chunk_iterator = await loop.run_in_executor(None, generate_audio_chunks)
@@ -241,6 +248,10 @@ class TTSRequestTask:
         except Exception as e:
             logger.error(f"Streaming generation failed: {e}")
             raise
+        finally:
+            # Release inference lock
+            if self._inference_lock:
+                self._inference_lock.release()
 
     async def _generate_non_streaming(self, model, params: dict) -> None:
         """Generate audio in non-streaming mode."""
@@ -248,6 +259,10 @@ class TTSRequestTask:
         await self._send_progress("generating", 0.5, "Generating audio...")
 
         try:
+            # Acquire inference lock before running model inference
+            if self._inference_lock:
+                await self._inference_lock.acquire()
+
             wav = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: model.generate(
@@ -285,6 +300,11 @@ class TTSRequestTask:
                 )
             )
 
+            # Check if cancelled after generation completes
+            if self._cancelled:
+                logger.info(f"Task {self.session.request_id} cancelled after generation")
+                return
+
             await self._send_progress("encoding", 0.9, "Encoding audio...")
 
             # Convert to PCM 16-bit
@@ -317,6 +337,10 @@ class TTSRequestTask:
         except Exception as e:
             logger.error(f"Non-streaming generation failed: {e}")
             raise
+        finally:
+            # Release inference lock
+            if self._inference_lock:
+                self._inference_lock.release()
 
     async def _update_state(self, state: str) -> None:
         """Update the session state."""

@@ -96,20 +96,26 @@ class VoxCPMWebSocketServer:
         logger.info("Stopping server...")
         self._running = False
 
-        # Stop task queue
-        await self.queue.stop()
+        try:
+            # Stop task queue with timeout
+            await asyncio.wait_for(self.queue.stop(), timeout=0.8)
+        except asyncio.TimeoutError:
+            logger.warning("Queue stop timed out")
 
         # Stop metrics task
         if self._metrics_task:
             self._metrics_task.cancel()
             try:
-                await self._metrics_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self._metrics_task, timeout=0.5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
                 pass
 
-        # Close all connections
+        # Close all connections with timeout
         for connection in list(self.state.connections):
-            await connection.close()
+            try:
+                await asyncio.wait_for(connection.close(), timeout=0.5)
+            except asyncio.TimeoutError:
+                logger.warning(f"Connection {connection.id} close timed out")
 
         logger.info("Server stopped")
 

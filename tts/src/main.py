@@ -111,9 +111,15 @@ async def main():
 async def shutdown(server: VoxCPMWebSocketServer, web_server: HTTPWebServer = None):
     """Gracefully shutdown the servers."""
     logger.info("Shutting down...")
-    await server.stop()
+    try:
+        await asyncio.wait_for(server.stop(), timeout=1.0)
+    except asyncio.TimeoutError:
+        logger.warning("Server stop timed out")
     if web_server:
-        await web_server.stop()
+        try:
+            await asyncio.wait_for(web_server.stop(), timeout=1.0)
+        except asyncio.TimeoutError:
+            logger.warning("Web server stop timed out")
 
 
 def run():

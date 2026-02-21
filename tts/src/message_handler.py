@@ -124,6 +124,23 @@ class MessageHandler:
             params=params
         )
 
+        # If max_concurrent is 1, cancel all previous running and pending tasks
+        if self.queue.max_concurrent == 1:
+            # Cancel running tasks
+            if self.queue.running_count > 0:
+                logger.info(f"max_concurrent=1, cancelling {self.queue.running_count} running task(s)")
+                cancelled = await self.queue.cancel_all_running()
+                logger.info(f"Cancelled: {cancelled}")
+
+            # Clear pending tasks from queue
+            pending = self.queue.clear_pending()
+            if pending:
+                logger.info(f"Cleared {len(pending)} pending task(s) from queue")
+                for task in pending:
+                    task.session.cancelled = True
+                    task.session.state = "cancelled"
+                    session_manager.remove_session(task.session.request_id)
+
         # Create and queue task
         task = TTSRequestTask(
             session=session,
