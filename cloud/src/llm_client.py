@@ -3,11 +3,134 @@ import json
 from typing import Any, Optional
 import logging
 import aiohttp
+import re
 
 from .config import LLMConfig
 from .mcp_manager import MCPToolManager
 
 logger = logging.getLogger(__name__)
+
+
+# Emoji 和特殊符号的 Unicode 范围
+EMOJI_RANGES = [
+    (0x1F600, 0x1F64F),  # 表情符号
+    (0x1F300, 0x1F5FF),  # 符号和图标
+    (0x1F680, 0x1F6FF),  # 交通和地图
+    (0x1F700, 0x1F77F),  # 炼金术符号
+    (0x1F780, 0x1F7FF),  # 几何符号
+    (0x1F800, 0x1F8FF),  # 补充符号
+    (0x1F900, 0x1F9FF),  # 补充符号和图标
+    (0x1FA00, 0x1FA6F),  # 扩展符号
+    (0x1FA70, 0x1FAFF),  # 符号和图标
+    (0x2600, 0x26FF),    # 杂项符号
+    (0x2700, 0x27BF),    # 装饰符号
+    (0xFE00, 0xFE0F),    # 变体选择器
+    (0x1F900, 0x1F9FF),  # 补充符号
+    (0x231A, 0x231B),    # 手表/时钟
+    (0x23E9, 0x23F3),    # 各种箭头
+    (0x23F8, 0x23FA),    # 媒体符号
+    (0x25AA, 0x25AB),    # 方形
+    (0x25B6, 0x25C0),    # 三角形
+    (0x25FB, 0x25FE),    # 方形
+    (0x2614, 0x2615),    # 雨伞/热饮
+    (0x2648, 0x2653),    # 星座
+    (0x267F, 0x267F),    # 轮椅
+    (0x2693, 0x2693),    # 锚
+    (0x26A1, 0x26A1),    # 高压
+    (0x26AA, 0x26AB),    # 圆圈
+    (0x26BD, 0x26BE),    # 足球/棒球
+    (0x26C4, 0x26C5),    # 雪人/太阳
+    (0x26CE, 0x26CE),    # 星座
+    (0x26D4, 0x26D4),    # 禁止
+    (0x26EA, 0x26EA),    # 教堂
+    (0x26F2, 0x26F3),    # 喷泉/高尔夫
+    (0x26F5, 0x26F5),    # 帆船
+    (0x26FA, 0x26FA),    # 帐篷
+    (0x26FD, 0x26FD),    # 燃料泵
+    (0x2702, 0x2702),    # 剪刀
+    (0x2705, 0x2705),    # 勾
+    (0x2708, 0x270D),    # 各种符号
+    (0x270F, 0x270F),    # 铅笔
+    (0x2712, 0x2712),    # 笔
+    (0x2714, 0x2714),    # 勾
+    (0x2716, 0x2716),    # 乘
+    (0x271D, 0x271D),    # 十字
+    (0x2721, 0x2721),    # 星星
+    (0x2728, 0x2728),    # 闪光
+    (0x2733, 0x2734),    # 星星
+    (0x2744, 0x2744),    # 雪花
+    (0x2747, 0x2747),    # 闪光
+    (0x274C, 0x274C),    # 叉
+    (0x274E, 0x274E),    # 叉
+    (0x2753, 0x2755),    # 问号
+    (0x2757, 0x2757),    # 感叹号
+    (0x2763, 0x2764),    # 心形
+    (0x2795, 0x2797),    # 加减乘
+    (0x27A1, 0x27A1),    # 箭头
+    (0x27B0, 0x27B0),    # 循环
+    (0x27BF, 0x27BF),    # 双圈
+    (0x2934, 0x2935),    # 箭头
+    (0x2B05, 0x2B07),    # 箭头
+    (0x2B1B, 0x2B1C),    # 方形
+    (0x2B50, 0x2B50),    # 星星
+    (0x2B55, 0x2B55),    # 圆圈
+    (0x3030, 0x3030),    # 波浪
+    (0x303D, 0x303D),    # 交替
+    (0x3297, 0x3297),    # 圆圈
+    (0x3299, 0x3299),    # 圆圈
+]
+
+
+def _remove_emojis_and_special_chars(text: str) -> str:
+    """
+    移除文本中的表情符号和特殊字符
+    """
+    if not text:
+        return text
+
+    # 移除 emoji
+    for start, end in EMOJI_RANGES:
+        text = text.encode("utf-32-le").decode("utf-32-le", errors="ignore")
+
+    # 使用正则表达式移除特殊符号
+    # 移除各种装饰性符号
+    text = re.sub(r"[★☆◆◇○●■□△▽▲▼◎◢◣◤◥♠♥♦♣♤♡♧♢♀♂☀☁☂☃☄★☆]", "", text)
+    # 移除箭头类符号
+    text = re.sub(r"[←↑→↓↔↕↖↗↘↙⇄⇅⇆⇇⇈⇉⇊⇋⇌⇍⇎⇏⇐⇑⇒⇓⇔⇕⇖⇗⇘⇙]", "", text)
+    # 移除其他特殊符号
+    text = re.sub(r"[©®™℠℞℻ℼℽℾℿ⅀⅁⅂⅃⅄ⅅⅆⅇⅈⅉ⅊⅋⅌⅍ⅎ⅏]", "", text)
+
+    # 移除零宽字符
+    text = re.sub(r"[\u200B-\u200D\uFEFF]", "", text)
+
+    # 再次使用 unicode 范围清理 emoji
+    cleaned_chars = []
+    for char in text:
+        code = ord(char)
+        is_emoji = any(start <= code <= end for start, end in EMOJI_RANGES)
+        if not is_emoji:
+            cleaned_chars.append(char)
+    text = "".join(cleaned_chars)
+
+    return text
+
+
+def clean_response_content(text: str) -> str:
+    """
+    清理 LLM 响应内容，移除不适合语音播报的内容
+    """
+    if not text:
+        return text
+
+    # 移除表情符号和特殊字符
+    text = _remove_emojis_and_special_chars(text)
+
+    # 清理多余的空白字符
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)  # 多个空行压缩为两个
+    text = re.sub(r"[ \t]+", " ", text)  # 多个空格压缩为一个
+    text = re.sub(r"^\s+|\s+$", "", text, flags=re.MULTILINE)  # 行首行尾空白
+
+    return text
 
 
 class LLMClient:
@@ -77,8 +200,10 @@ class LLMClient:
     ) -> dict[str, Any]:
         all_messages = messages.copy()
 
-        if system_prompt:
-            all_messages.insert(0, {"role": "system", "content": system_prompt})
+        # 使用配置的系统提示词，如果没有传入则使用默认的
+        prompt = system_prompt or self.config.system_prompt
+        if prompt:
+            all_messages.insert(0, {"role": "system", "content": prompt})
 
         tools = None
         if self.mcp_manager:
@@ -135,7 +260,9 @@ class LLMClient:
             return ""
 
         message = choices[0].get("message", {})
-        return message.get("content", "")
+        content = message.get("content", "")
+        # 清理响应内容，移除特殊符号和 markdown 格式
+        return clean_response_content(content)
 
     def extract_tool_calls(self, response: dict[str, Any]) -> list[dict[str, Any]]:
         choices = response.get("choices", [])

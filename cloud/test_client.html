@@ -346,6 +346,8 @@
                 this.audioQueue = [];
                 this.playbackContext = null;
                 this._nextPlayTime = 0;
+                this.activeSources = [];
+                this.currentRequestId = null;
                 
                 // Stats
                 this.stats = { messages: 0, tools: 0, asr: 0, tts: 0 };
@@ -730,6 +732,14 @@
             handleTTSAudio(data) {
                 const parsed = this.parseTTSFrame(data);
                 if (parsed && parsed.audio && parsed.audio.length > 0) {
+                    const requestId = parsed.metadata?.request_id;
+                    
+                    if (requestId && requestId !== this.currentRequestId) {
+                        this.stopAllAudio();
+                        this.currentRequestId = requestId;
+                        this.addMessage('tts', '[TTS] New request, stopped previous audio');
+                    }
+                    
                     this.stats.tts++;
                     this.updateStats();
                     
@@ -782,15 +792,34 @@
                         source.connect(this.playbackContext.destination);
                         source.start(startTime);
                         
+                        this.activeSources.push(source);
+                        source.onended = () => {
+                            const idx = this.activeSources.indexOf(source);
+                            if (idx > -1) this.activeSources.splice(idx, 1);
+                        };
+                        
                         this._nextPlayTime = startTime + audioBuffer.duration;
                     }
                     
                 } else if (parsed && parsed.metadata) {
                     if (parsed.metadata.is_final) {
                         this.isPlaying = false;
+                        this.currentRequestId = null;
                         this.addMessage('tts', '[TTS] Audio stream complete');
                     }
                 }
+            }
+            
+            stopAllAudio() {
+                for (const source of this.activeSources) {
+                    try {
+                        source.stop();
+                    } catch (e) {}
+                }
+                this.activeSources = [];
+                this.audioQueue = [];
+                this.isPlaying = false;
+                this._nextPlayTime = 0;
             }
             
             parseTTSFrame(buffer) {

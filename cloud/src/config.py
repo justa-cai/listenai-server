@@ -27,6 +27,16 @@ class LLMConfig:
     timeout: int = 120
     temperature: float = 0.7
     max_tokens: int = 2048
+    system_prompt: str = (
+        "你是一个专业的语音助手助手。请遵循以下规范：\n"
+        "1. 回复简洁明了，直接回答用户问题\n"
+        "2. 禁止使用任何表情符号、特殊符号（如 emoji、★、◆、● 等）\n"
+        "3. 使用纯文本格式，避免使用 markdown 格式（如 **加粗**、*斜体*、`代码` 等）\n"
+        "4. 回复内容适合语音播报，使用自然口语化的表达\n"
+        "5. 不要重复用户的问题，直接给出答案或建议"
+    )
+    # 是否在对话中包含上下文历史
+    enable_context: bool = False
 
 
 @dataclass
@@ -64,6 +74,16 @@ class Config:
             timeout=int(os.getenv("LLM_TIMEOUT", "120")),
             temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
             max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2048")),
+            system_prompt=os.getenv(
+                "LLM_SYSTEM_PROMPT",
+                "你是一个专业的语音助手助手。请遵循以下规范：\n"
+                "1. 回复简洁明了，直接回答用户问题\n"
+                "2. 禁止使用任何表情符号、特殊符号（如 emoji、★、◆、● 等）\n"
+                "3. 使用纯文本格式，避免使用 markdown 格式（如 **加粗**、*斜体*、`代码` 等）\n"
+                "4. 回复内容适合语音播报，使用自然口语化的表达\n"
+                "5. 不要重复用户的问题，直接给出答案或建议",
+            ),
+            enable_context=os.getenv("LLM_ENABLE_CONTEXT", "false").lower() == "true",
         )
 
         mcp = MCPConfig(

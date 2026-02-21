@@ -61,6 +61,7 @@ class ConfigureMessage(BaseMessage):
     type: str = ClientMessageType.CONFIGURE.value
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    enable_context: Optional[bool] = None
 
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()
@@ -68,6 +69,8 @@ class ConfigureMessage(BaseMessage):
             d["temperature"] = self.temperature
         if self.max_tokens is not None:
             d["max_tokens"] = self.max_tokens
+        if self.enable_context is not None:
+            d["enable_context"] = self.enable_context
         return d
 
 

@@ -226,7 +226,12 @@ class CloudServer:
             conn.session.start_interaction()
             conn.session.add_message("user", text)
 
-            messages = conn.session.get_messages()
+            # 根据配置决定是否使用上下文历史
+            if conn.config.llm.enable_context:
+                messages = conn.session.get_messages()
+            else:
+                # 只发送当前消息，不包含历史上下文
+                messages = [{"role": "user", "content": text}]
 
             try:
                 response = await conn.llm_client.process_with_tools(messages)
@@ -272,11 +277,14 @@ class CloudServer:
     ) -> None:
         temperature = data.get("temperature")
         max_tokens = data.get("max_tokens")
+        enable_context = data.get("enable_context")
 
         if temperature is not None:
             conn.config.llm.temperature = float(temperature)
         if max_tokens is not None:
             conn.config.llm.max_tokens = int(max_tokens)
+        if enable_context is not None:
+            conn.config.llm.enable_context = bool(enable_context)
 
         await conn.send_json(
             create_status_message(
@@ -284,6 +292,7 @@ class CloudServer:
                 {
                     "temperature": conn.config.llm.temperature,
                     "max_tokens": conn.config.llm.max_tokens,
+                    "enable_context": conn.config.llm.enable_context,
                 },
             ).to_dict()
         )
