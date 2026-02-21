@@ -40,6 +40,11 @@ ASR_LANGUAGE = "中文"  # Language for ASR: 中文, 英文, etc.
 ASR_TEMP_DIR = "tmp"  # Directory for temporary wav files for debugging
 ASR_KEEP_TEMP_FILES = True  # Keep temp wav files for debugging (set to False to delete)
 
+# Energy Filter Configuration
+ENERGY_THRESHOLD = 0.01  # Energy threshold for filtering low-energy speech segments (noise)
+ASR_MIN_TEXT_LENGTH = 2  # Minimum text length to send result (filters empty/invalid ASR results)
+VAD_SPEECH_RATIO_THRESHOLD = 0.3  # Minimum speech ratio (speech frames / total frames) for valid audio
+
 # WebSocket Configuration
 WS_HOST = "0.0.0.0"
 WS_PORT = 9200
@@ -258,6 +263,19 @@ class SpeechBuffer:
         self.is_recording = False
         self.start_time = None
 
+    def get_rms_energy(self) -> float:
+        """
+        Calculate RMS (Root Mean Square) energy of the audio buffer.
+
+        Returns:
+            RMS energy value (0.0 to 1.0 for normalized audio)
+        """
+        if self.total_samples == 0:
+            return 0.0
+
+        audio = self.get_audio()
+        return np.sqrt(np.mean(audio ** 2))
+
 
 # ============================================================================
 # VAD Processor
@@ -391,6 +409,60 @@ class VADProcessor:
         self.is_speeching = False
         self.consecutive_silence_count = 0
         self.frame_count = 0
+
+    def calculate_speech_ratio(self, audio: np.ndarray) -> float:
+        """
+        Calculate the ratio of speech frames to total frames in audio.
+
+        This helps distinguish between valid speech (high speech ratio) and
+        sudden noises (low speech ratio despite high energy).
+
+        Args:
+            audio: Audio data (float32 numpy array)
+
+        Returns:
+            Speech ratio (0.0 to 1.0), where 1.0 means all frames are speech
+        """
+        if len(audio) == 0:
+            return 0.0
+
+        # Save current state
+        saved_is_speeching = self.is_speeching
+        saved_silence_count = self.consecutive_silence_count
+        saved_frame_count = self.frame_count
+
+        # Split audio into frames and count speech frames
+        total_frames = 0
+        speech_frames = 0
+
+        for i in range(0, len(audio), self.hop_size):
+            frame = audio[i : i + self.hop_size]
+            if len(frame) < self.hop_size:
+                # Pad last frame if needed
+                frame = np.pad(frame, (0, self.hop_size - len(frame)))
+
+            # Convert float32 to int16 for TenVad
+            frame_int16 = (frame * 32768.0).astype(np.int16)
+            if len(frame_int16) < self.hop_size:
+                frame_int16 = np.pad(
+                    frame_int16, (0, self.hop_size - len(frame_int16)), mode="constant"
+                )
+
+            # Use TenVad to check if this frame is speech
+            probability, speech_flag = self.ten_vad.process(frame_int16)
+            total_frames += 1
+            if speech_flag == 1:  # 1 = speech, 0 = non-speech
+                speech_frames += 1
+
+        # Restore state
+        self.is_speeching = saved_is_speeching
+        self.consecutive_silence_count = saved_silence_count
+        self.frame_count = saved_frame_count
+
+        if total_frames == 0:
+            return 0.0
+
+        return speech_frames / total_frames
 
 
 # ============================================================================
@@ -527,6 +599,44 @@ class ASRProcessor:
 
         return self._process_audio_data(audio, segment_id)
 
+    @staticmethod
+    def is_valid_asr_result(text: str) -> bool:
+        """
+        Validate ASR result to filter out invalid/non-speech audio.
+
+        Checks:
+        - Text not empty after stripping
+        - Minimum length threshold
+        - Not only punctuation/symbols
+
+        Args:
+            text: ASR recognition result text
+
+        Returns:
+            True if result is valid speech, False if should be filtered
+        """
+        if not text:
+            return False
+
+        # Remove whitespace
+        text_stripped = text.strip()
+
+        if not text_stripped:
+            return False
+
+        # Check minimum length (filters single char results)
+        if len(text_stripped) < ASR_MIN_TEXT_LENGTH:
+            return False
+
+        # Check if result contains at least some Chinese characters or alphanumeric
+        # This filters pure punctuation results like "，。" or "?!"
+        import re
+        has_valid_chars = bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbfa-zA-Z0-9]', text_stripped))
+        if not has_valid_chars:
+            return False
+
+        return True
+
 
 # ============================================================================
 # ASR WebSocket Service
@@ -608,11 +718,43 @@ class ASRWebSocketService:
                             duration = speech_buffer.get_duration()
                             samples = speech_buffer.total_samples
 
+                            # Calculate energy for filtering
+                            energy = speech_buffer.get_rms_energy()
+                            logger.info(
+                                f"[Client {client_id}] Speech segment ended - "
+                                f"duration: {duration:.2f}s, samples: {samples}, "
+                                f"energy: {energy:.6f}"
+                            )
+
+                            # Filter by energy threshold
+                            if energy < ENERGY_THRESHOLD:
+                                logger.info(
+                                    f"[Client {client_id}] Speech segment energy too low "
+                                    f"({energy:.6f} < {ENERGY_THRESHOLD}), skipping ASR"
+                                )
+                                speech_buffer.clear()
+                                continue
+
+                            # Calculate speech ratio for filtering sudden noises
+                            speech_audio = speech_buffer.get_audio()
+                            speech_ratio = vad_processor.calculate_speech_ratio(speech_audio)
+                            logger.info(
+                                f"[Client {client_id}] Speech ratio: {speech_ratio:.2%}"
+                            )
+
+                            # Filter by speech ratio threshold
+                            if speech_ratio < VAD_SPEECH_RATIO_THRESHOLD:
+                                logger.info(
+                                    f"[Client {client_id}] Speech ratio too low "
+                                    f"({speech_ratio:.2%} < {VAD_SPEECH_RATIO_THRESHOLD:.0%}), "
+                                    f"likely noise, skipping ASR"
+                                )
+                                speech_buffer.clear()
+                                continue
+
                             if duration >= 0.3:  # Minimum 0.3 seconds
                                 logger.info(
-                                    f"[Client {client_id}] Speech segment ended - "
-                                    f"duration: {duration:.2f}s, samples: {samples}, "
-                                    f"running segment recognition..."
+                                    f"[Client {client_id}] Running segment recognition..."
                                 )
                                 result = self.asr_processor.process_segment_from_buffer(
                                     speech_buffer
@@ -622,13 +764,20 @@ class ASRWebSocketService:
                                     logger.info(
                                         f"[Client {client_id}] Segment recognition result: {text}"
                                     )
-                                    await self.send_result(
-                                        websocket,
-                                        text,
-                                        is_final=True,
-                                        is_speeching=False,
-                                        segment_id=segment_id,
-                                    )
+
+                                    # Validate ASR result to filter invalid/non-speech audio
+                                    if not self.asr_processor.is_valid_asr_result(text):
+                                        logger.info(
+                                            f"[Client {client_id}] ASR result filtered (invalid): {text}"
+                                        )
+                                    else:
+                                        await self.send_result(
+                                            websocket,
+                                            text,
+                                            is_final=True,
+                                            is_speeching=False,
+                                            segment_id=segment_id,
+                                        )
                                 else:
                                     logger.warning(
                                         f"[Client {client_id}] Segment recognition failed"
