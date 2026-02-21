@@ -11,11 +11,15 @@ class ClientMessageType(str, Enum):
     START_SESSION = "start_session"
     END_SESSION = "end_session"
     PING = "ping"
+    REGISTER_TOOLS = "register_tools"
+    TOOL_RESULT = "tool_result"
 
 
 class ServerMessageType(str, Enum):
     LLM_RESPONSE = "llm_response"
     TOOL_CALL = "tool_call"
+    TOOL_CALLBACK = "tool_callback"
+    TOOLS_REGISTERED = "tools_registered"
     ERROR = "error"
     STATUS = "status"
     PONG = "pong"
@@ -28,6 +32,11 @@ class ErrorCode(str, Enum):
     SESSION_ERROR = "SESSION_ERROR"
     TIMEOUT = "TIMEOUT"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    TOOL_NOT_FOUND = "TOOL_NOT_FOUND"
+    TOOL_EXECUTION_FAILED = "TOOL_EXECUTION_FAILED"
+    INVALID_TOOL_PARAMETERS = "INVALID_TOOL_PARAMETERS"
+    TOOL_RESULT_TIMEOUT = "TOOL_RESULT_TIMEOUT"
+    TOOL_REGISTRATION_FAILED = "TOOL_REGISTRATION_FAILED"
 
 
 @dataclass
@@ -172,6 +181,59 @@ class ToolCallMessage(BaseMessage):
         d["result"] = self.result
         d["success"] = self.success
         d["duration_ms"] = self.duration_ms
+        return d
+
+
+@dataclass
+class RegisterToolsMessage(BaseMessage):
+    type: str = ClientMessageType.REGISTER_TOOLS.value
+    tools: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class ToolResultMessage(BaseMessage):
+    type: str = ClientMessageType.TOOL_RESULT.value
+    call_id: str = ""
+    result: Any = None
+    success: bool = True
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d = super().to_dict()
+        d["call_id"] = self.call_id
+        if self.success:
+            d["result"] = self.result
+        else:
+            d["error"] = self.error
+        d["success"] = self.success
+        return d
+
+
+@dataclass
+class ToolCallbackMessage(BaseMessage):
+    type: str = ServerMessageType.TOOL_CALLBACK.value
+    call_id: str = ""
+    tool_name: str = ""
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        d = super().to_dict()
+        d["call_id"] = self.call_id
+        d["tool_name"] = self.tool_name
+        d["arguments"] = self.arguments
+        return d
+
+
+@dataclass
+class ToolsRegisteredMessage(BaseMessage):
+    type: str = ServerMessageType.TOOLS_REGISTERED.value
+    count: int = 0
+    tools: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        d = super().to_dict()
+        d["count"] = self.count
+        d["tools"] = self.tools
         return d
 
 

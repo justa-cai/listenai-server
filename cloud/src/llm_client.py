@@ -11,6 +11,10 @@ from .mcp_manager import MCPToolManager
 logger = logging.getLogger(__name__)
 
 
+# 判断工具是否是客户端工具的标记前缀
+CLIENT_TOOL_PREFIX = "client:"
+
+
 # Emoji 和特殊符号的 Unicode 范围
 EMOJI_RANGES = [
     (0x1F600, 0x1F64F),  # 表情符号
@@ -129,6 +133,7 @@ def clean_response_content(text: str) -> str:
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)  # 多个空行压缩为两个
     text = re.sub(r"[ \t]+", " ", text)  # 多个空格压缩为一个
     text = re.sub(r"^\s+|\s+$", "", text, flags=re.MULTILINE)  # 行首行尾空白
+    text = re.sub("\n<tool_call>", "", text)
 
     return text
 
@@ -138,6 +143,11 @@ class LLMClient:
         self.config = config
         self.mcp_manager = mcp_manager
         self._session: Optional[aiohttp.ClientSession] = None
+        self._client_tools: Optional[Any] = None  # ClientToolManager instance
+
+    def set_client_tools(self, client_tools_manager: Any) -> None:
+        """设置客户端工具管理器"""
+        self._client_tools = client_tools_manager
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -198,6 +208,11 @@ class LLMClient:
         messages: list[dict[str, str]],
         system_prompt: Optional[str] = None,
     ) -> dict[str, Any]:
+        """
+        处理带工具的消息（只处理服务端工具）
+
+        客户端工具需要由 server.py 处理回调流程
+        """
         all_messages = messages.copy()
 
         # 使用配置的系统提示词，如果没有传入则使用默认的
@@ -205,19 +220,34 @@ class LLMClient:
         if prompt:
             all_messages.insert(0, {"role": "system", "content": prompt})
 
-        tools = None
+        # 收集所有工具（服务端 MCP + 客户端工具）
+        tools = []
         if self.mcp_manager:
-            tools = self.mcp_manager.get_openai_tools()
+            tools.extend(self.mcp_manager.get_openai_tools())
+        if self._client_tools:
+            tools.extend(self._client_tools.get_openai_tools())
 
-        response = await self.chat_completion(all_messages, tools=tools)
+        tools_param = tools if tools else None
+
+        logger.info(f"process_with_tools: _client_tools exists: {self._client_tools is not None}")
+        if self._client_tools:
+            logger.info(f"  Client tool names: {self.get_client_tool_names()}")
+
+        response = await self.chat_completion(all_messages, tools=tools_param)
 
         choice = response.get("choices", [{}])[0]
         message = choice.get("message", {})
 
         tool_calls = message.get("tool_calls", [])
+        logger.info(f"process_with_tools: tool_calls count: {len(tool_calls)}")
 
-        if tool_calls and self.mcp_manager:
+        tool_calls = message.get("tool_calls", [])
+
+        if tool_calls:
             all_messages.append(message)
+
+            # Track which tools are client tools
+            client_tools_found = []
 
             for tool_call in tool_calls:
                 function = tool_call.get("function", {})
@@ -230,15 +260,35 @@ class LLMClient:
                 except json.JSONDecodeError:
                     tool_args = {}
 
-                execute_result = await self.mcp_manager.execute_tool(
-                    tool_name, tool_args, tool_call_id
+                # 判断是服务端工具还是客户端工具
+                is_client_tool = (
+                    self._client_tools and
+                    self._client_tools.has_tool(tool_name)
                 )
 
-                tool_result_content = json.dumps(
-                    execute_result.get(
-                        "result", execute_result.get("error", "Unknown error")
-                    )
-                )
+                if is_client_tool:
+                    client_tools_found.append(tool_name)
+
+                tool_result_content = ""
+                if is_client_tool:
+                    # 客户端工具：返回特殊标记，由 server 处理
+                    tool_result_content = json.dumps({
+                        "_client_tool": True,
+                        "tool_name": tool_name,
+                    })
+                else:
+                    # 服务端工具：直接执行
+                    if self.mcp_manager:
+                        execute_result = await self.mcp_manager.execute_tool(
+                            tool_name, tool_args, tool_call_id
+                        )
+                        tool_result_content = json.dumps(
+                            execute_result.get(
+                                "result", execute_result.get("error", "Unknown error")
+                            )
+                        )
+                    else:
+                        tool_result_content = json.dumps({"error": "Tool not found"})
 
                 all_messages.append(
                     {
@@ -249,10 +299,64 @@ class LLMClient:
                     }
                 )
 
-            final_response = await self.chat_completion(all_messages, tools=tools)
-            return final_response
+            # 如果有客户端工具调用，不再次调用 LLM，返回当前状态
+            # 让 server 处理客户端工具后再次调用
+            if client_tools_found:
+                logger.info(f"Found {len(client_tools_found)} client tools: {client_tools_found}")
+                # 返回包含 tool_calls 的响应，让 server 知道有哪些工具调用
+                return response
+            else:
+                # 只有服务端工具，正常完成流程
+                final_response = await self.chat_completion(all_messages, tools=tools_param)
+                return final_response
 
         return response
+
+    async def continue_with_client_tool_results(
+        self,
+        messages: list[dict[str, str]],
+        tool_continuation: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """
+        在客户端工具执行完成后继续处理
+
+        Args:
+            messages: 原始消息列表（包含user消息和历史）
+            tool_continuation: 工具调用后的消息序列（assistant消息 + tool结果）
+
+        Returns:
+            LLM 最终响应
+        """
+        all_messages = messages.copy()
+
+        # 添加系统提示
+        if self.config.system_prompt:
+            all_messages.insert(0, {"role": "system", "content": self.config.system_prompt})
+
+        # 收集工具定义
+        tools = []
+        if self.mcp_manager:
+            tools.extend(self.mcp_manager.get_openai_tools())
+        if self._client_tools:
+            tools.extend(self._client_tools.get_openai_tools())
+
+        tools_param = tools if tools else None
+
+        # 添加工具调用后续消息（assistant + tool results）
+        for result in tool_continuation:
+            all_messages.append(result)
+
+        logger.info(f"Final messages to LLM: {len(all_messages)} messages")
+
+        # 获取最终响应
+        final_response = await self.chat_completion(all_messages, tools=tools_param)
+        return final_response
+
+    def get_client_tool_names(self) -> list[str]:
+        """获取所有客户端工具名称"""
+        if self._client_tools:
+            return list(self._client_tools._tools.keys())
+        return []
 
     def extract_content(self, response: dict[str, Any]) -> str:
         choices = response.get("choices", [])

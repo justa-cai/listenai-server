@@ -49,10 +49,19 @@ class MCPConfig:
 
 
 @dataclass
+class ClientToolsConfig:
+    enabled: bool = True
+    max_tools: int = 32
+    tool_timeout: int = 30
+    result_queue_size: int = 10
+
+
+@dataclass
 class Config:
     server: ServerConfig
     llm: LLMConfig
     mcp: MCPConfig
+    client_tools: ClientToolsConfig
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -94,7 +103,14 @@ class Config:
             instructions=os.getenv("MCP_INSTRUCTIONS", "ARCS Mini MCP Server"),
         )
 
-        return cls(server=server, llm=llm, mcp=mcp)
+        client_tools = ClientToolsConfig(
+            enabled=os.getenv("CLIENT_TOOLS_ENABLED", "true").lower() == "true",
+            max_tools=int(os.getenv("CLIENT_TOOLS_MAX_COUNT", "32")),
+            tool_timeout=int(os.getenv("CLIENT_TOOL_TIMEOUT", "30")),
+            result_queue_size=int(os.getenv("CLIENT_TOOL_RESULT_QUEUE_SIZE", "10")),
+        )
+
+        return cls(server=server, llm=llm, mcp=mcp, client_tools=client_tools)
 
 
 def setup_logging(config: Config) -> logging.Logger:

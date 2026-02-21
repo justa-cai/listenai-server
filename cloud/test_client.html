@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ListenAI V1.1 - Decoupled Client</title>
+    <title>ListenAI V1.2 - Client Tools Demo</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -13,20 +13,23 @@
             min-height: 100vh;
             padding: 20px;
         }
-        .container { max-width: 1400px; margin: 0 auto; }
-        h1 { text-align: center; color: #4fc3f7; margin-bottom: 10px; font-size: 1.8em; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        h1 { text-align: center; color: #4fc3f7; margin-bottom: 5px; font-size: 1.8em; }
         .subtitle { text-align: center; color: #888; margin-bottom: 20px; font-size: 0.9em; }
-        
+
         .connection-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 15px;
             margin-bottom: 20px;
         }
-        @media (max-width: 900px) {
+        @media (max-width: 1200px) {
+            .connection-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 600px) {
             .connection-grid { grid-template-columns: 1fr; }
         }
-        
+
         .conn-panel {
             background: rgba(255, 255, 255, 0.05);
             border-radius: 12px;
@@ -64,7 +67,7 @@
         }
         .status-dot.connected { background: #66bb6a; animation: pulse 2s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        
+
         .btn {
             padding: 8px 16px;
             border: none;
@@ -81,27 +84,38 @@
         .btn-success { background: #66bb6a; color: #fff; }
         .btn-success:hover { background: #81c784; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        
+
         .main-content {
             display: grid;
-            grid-template-columns: 1fr 280px;
+            grid-template-columns: 1fr 280px 380px 400px;
             gap: 20px;
         }
-        @media (max-width: 900px) {
+        @media (max-width: 1500px) {
+            .main-content { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 1000px) {
             .main-content { grid-template-columns: 1fr; }
         }
-        
+
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .panel h3 { color: #81d4fa; margin-bottom: 15px; font-size: 1.1em; }
+
         .messages-panel {
             background: rgba(0, 0, 0, 0.2);
             border-radius: 12px;
             padding: 15px;
-            height: calc(100vh - 280px);
+            height: calc(100vh - 220px);
             overflow-y: auto;
         }
-        @media (max-width: 900px) {
-            .messages-panel { min-height: 400px; max-height: 50vh; }
+        @media (max-width: 1000px) {
+            .messages-panel { min-height: 300px; max-height: 40vh; }
         }
-        
+
         .message {
             padding: 10px 15px;
             margin-bottom: 10px;
@@ -111,14 +125,16 @@
         .message-system { background: rgba(79, 195, 247, 0.2); border-left: 3px solid #4fc3f7; }
         .message-asr { background: rgba(171, 71, 188, 0.2); border-left: 3px solid #ab47bc; }
         .message-llm { background: rgba(255, 167, 38, 0.2); border-left: 3px solid #ffa726; }
-        .message-error { background: rgba(239, 83, 80, 0.2); border-left: 3px solid #ef5350; }
         .message-tool { background: rgba(102, 187, 106, 0.2); border-left: 3px solid #66bb6a; }
+        .message-tool-callback { background: rgba(156, 39, 176, 0.2); border-left: 3px solid #9c27b0; }
+        .message-error { background: rgba(239, 83, 80, 0.2); border-left: 3px solid #ef5350; }
         .message-tts { background: rgba(3, 169, 244, 0.2); border-left: 3px solid #03a9f4; }
         .message-time { font-size: 11px; color: #888; margin-bottom: 5px; }
-        
-        .controls-panel { display: flex; flex-direction: column; gap: 15px; }
-        
-        .record-section { text-align: center; }
+
+        /* Recording Section */
+        .record-section {
+            text-align: center;
+        }
         .record-btn {
             width: 80px;
             height: 80px;
@@ -138,52 +154,226 @@
         .record-btn svg { width: 30px; height: 30px; fill: #66bb6a; }
         .record-btn.recording svg { fill: #ef5350; }
         .visualizer { height: 50px; background: rgba(0, 0, 0, 0.3); border-radius: 8px; margin-bottom: 10px; }
-        
-        .panel {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
-            padding: 15px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+
+        /* LED Bulb Styles */
+        .led-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
         }
-        .panel h3 { color: #81d4fa; margin-bottom: 10px; font-size: 1em; }
-        
-        .option-row {
+
+        .led-bulb-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 16px;
+        }
+
+        .led-bulb {
+            width: 100px;
+            height: 140px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .led-bulb-off {
+            filter: brightness(0.3);
+        }
+
+        .bulb-glass {
+            width: 70px;
+            height: 90px;
+            background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.9) 0%, var(--bulb-color, rgba(255,200,100,0.8)) 50%, rgba(200,150,50,0.4) 100%);
+            border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            box-shadow:
+                0 0 20px var(--bulb-glow, rgba(255,200,100,0.5)),
+                0 0 40px var(--bulb-glow, rgba(255,200,100,0.3)),
+                0 0 60px var(--bulb-glow, rgba(255,200,100,0.2)),
+                inset 0 -20px 30px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+
+        .bulb-base {
+            width: 26px;
+            height: 35px;
+            background: linear-gradient(90deg, #555 0%, #888 50%, #555 100%);
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 3px;
+        }
+
+        .bulb-threads {
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 30px;
+            height: 8px;
+            background: repeating-linear-gradient(
+                90deg,
+                #666 0px,
+                #666 2px,
+                #444 2px,
+                #444 4px
+            );
+            border-radius: 2px;
+        }
+
+        .bulb-filament {
+            position: absolute;
+            top: 35px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 26px;
+            height: 26px;
+        }
+
+        .filament-wire {
+            position: absolute;
+            width: 2px;
+            height: 22px;
+            background: #888;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .filament-coil {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 13px;
+            height: 13px;
+            border: 2px solid #ffcc00;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #ffcc00;
+            transition: all 0.3s ease;
+        }
+
+        .bulb-on .filament-coil {
+            box-shadow: 0 0 15px var(--bulb-glow, #ffcc00), 0 0 30px var(--bulb-glow, #ffcc00);
+            border-color: var(--bulb-glow, #ffcc00);
+        }
+
+        .led-status {
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .led-status-text {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .led-status-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4fc3f7;
+        }
+
+        /* Controls */
+        .controls-section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .control-row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
         }
-        .option-row:last-child { border-bottom: none; }
-        .option-row label { font-size: 12px; color: #888; }
-        .toggle-switch {
+
+        .control-label {
+            font-size: 12px;
+            color: #aaa;
+        }
+
+        .power-switch {
             position: relative;
-            width: 40px;
-            height: 20px;
+            width: 44px;
+            height: 22px;
         }
-        .toggle-switch input { opacity: 0; width: 0; height: 0; }
-        .toggle-slider {
+        .power-switch input { opacity: 0; width: 0; height: 0; }
+        .power-slider {
             position: absolute;
             cursor: pointer;
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(255, 255, 255, 0.2);
-            border-radius: 20px;
+            border-radius: 22px;
             transition: 0.3s;
         }
-        .toggle-slider::before {
+        .power-slider::before {
             position: absolute;
             content: '';
-            height: 14px;
-            width: 14px;
-            left: 3px;
-            bottom: 3px;
+            height: 18px;
+            width: 18px;
+            left: 2px;
+            bottom: 2px;
             background: white;
             border-radius: 50%;
             transition: 0.3s;
         }
-        .toggle-switch input:checked + .toggle-slider { background: #4fc3f7; }
-        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
-        
+        .power-switch input:checked + .power-slider { background: #66bb6a; }
+        .power-switch input:checked + .power-slider::before { transform: translateX(22px); }
+
+        .brightness-slider {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            -webkit-appearance: none;
+            appearance: none;
+            outline: none;
+            background: linear-gradient(90deg, #333 0%, #888 100%);
+        }
+        .brightness-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4fc3f7;
+            cursor: pointer;
+        }
+
+        .color-presets {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .color-preset {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .color-preset:hover { transform: scale(1.1); }
+        .color-preset.active { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.5); }
+
+        .color-warm { background: radial-gradient(circle, #ffeb3b 0%, #ff9800 100%); }
+        .color-cool { background: radial-gradient(circle, #81d4fa 0%, #2196f3 100%); }
+        .color-red { background: radial-gradient(circle, #ff5252 0%, #d32f2f 100%); }
+        .color-green { background: radial-gradient(circle, #66bb6a 0%, #388e3c 100%); }
+        .color-blue { background: radial-gradient(circle, #4fc3f7 0%, #1976d2 100%); }
+        .color-purple { background: radial-gradient(circle, #ba68c8 0%, #7b1fa2 100%); }
+        .color-pink { background: radial-gradient(circle, #f06292 0%, #c2185b 100%); }
+        .color-white { background: radial-gradient(circle, #ffffff 0%, #e0e0e0 100%); }
+
+        /* Stats & Tools */
         .stats-panel {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -195,11 +385,61 @@
             border-radius: 8px;
             text-align: center;
         }
-        .stat-value { font-size: 20px; font-weight: bold; color: #4fc3f7; }
-        .stat-label { font-size: 10px; color: #888; margin-top: 3px; }
-        
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4fc3f7;
+        }
+        .stat-label {
+            font-size: 10px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .tools-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .tool-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            background: rgba(102, 187, 106, 0.1);
+            border-radius: 6px;
+            border: 1px solid rgba(102, 187, 106, 0.3);
+        }
+        .tool-icon {
+            width: 24px;
+            height: 24px;
+            background: rgba(102, 187, 106, 0.3);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+        .tool-info {
+            flex: 1;
+        }
+        .tool-name {
+            font-size: 12px;
+            font-weight: 500;
+            color: #66bb6a;
+        }
+        .tool-desc {
+            font-size: 10px;
+            color: #888;
+        }
+
         .flow-indicator {
-            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
             padding: 10px;
             background: rgba(79, 195, 247, 0.1);
             border-radius: 8px;
@@ -207,13 +447,121 @@
             font-size: 12px;
             color: #4fc3f7;
         }
+
+        .btn-all {
+            padding: 8px 20px;
+            background: linear-gradient(135deg, #66bb6a 0%, #4fc3f7 100%);
+            color: #1a1a2e;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .btn-all:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(79, 195, 247, 0.4);
+        }
+        .btn-all:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Input Section */
+        .input-section {
+            display: flex;
+            gap: 8px;
+        }
+        .input-section input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-size: 13px;
+        }
+        .input-section input:focus {
+            outline: none;
+            border-color: #4fc3f7;
+        }
+
+        .quick-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .quick-btn {
+            padding: 6px 10px;
+            font-size: 11px;
+            background: rgba(79, 195, 247, 0.2);
+            border: 1px solid rgba(79, 195, 247, 0.4);
+            color: #4fc3f7;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .quick-btn:hover {
+            background: rgba(79, 195, 247, 0.3);
+        }
+
+        .option-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .option-row:last-child { border-bottom: none; }
+        .option-row label { font-size: 11px; color: #888; }
+
+        .toggle-switch {
+            position: relative;
+            width: 36px;
+            height: 18px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 18px;
+            transition: 0.3s;
+        }
+        .toggle-slider::before {
+            position: absolute;
+            content: '';
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background: white;
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider { background: #4fc3f7; }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+        select.voice-select {
+            width: 100%;
+            margin-top: 5px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>ListenAI V1.1</h1>
-        <p class="subtitle">Decoupled Architecture - ASR | LLM | TTS</p>
-        
+        <h1>🏠 ListenAI V1.2 - Client Tools Demo</h1>
+        <p class="subtitle">Voice Control + LED Smart Bulb with Client Tool Registration</p>
+
         <div class="connection-grid">
             <div class="conn-panel">
                 <h3>🎤 ASR Service</h3>
@@ -224,7 +572,7 @@
                     <button class="btn btn-primary" id="asrConnectBtn">Connect</button>
                 </div>
             </div>
-            
+
             <div class="conn-panel">
                 <h3>🤖 LLM Gateway</h3>
                 <input type="text" id="llmUrl" value="ws://192.168.1.169:9400">
@@ -234,7 +582,7 @@
                     <button class="btn btn-primary" id="llmConnectBtn">Connect</button>
                 </div>
             </div>
-            
+
             <div class="conn-panel">
                 <h3>🔊 TTS Service</h3>
                 <input type="text" id="ttsUrl" value="ws://192.168.1.169:9300/tts">
@@ -244,18 +592,30 @@
                     <button class="btn btn-primary" id="ttsConnectBtn">Connect</button>
                 </div>
             </div>
+
+            <div class="conn-panel">
+                <h3>🔧 Registered Tools</h3>
+                <div class="tools-list" id="toolsList">
+                    <div style="padding:8px;color:#666;font-size:11px;text-align:center;">
+                        Connect to LLM Gateway
+                    </div>
+                </div>
+            </div>
         </div>
-        
-        <div class="flow-indicator" id="flowIndicator">
-            Ready - Connect all services to start
+
+        <div class="flow-indicator">
+            <button class="btn-all" id="connectAllBtn">⚡ Connect All</button>
+            <span id="flowIndicator">Connect all services to enable voice control</span>
         </div>
-        
+
         <div class="main-content">
+            <!-- Messages Panel -->
             <div class="messages-panel" id="messagesPanel"></div>
-            
-            <div class="controls-panel">
-                <div class="panel record-section">
-                    <h3>Voice Input</h3>
+
+            <!-- Recording & LED Panel -->
+            <div class="panel">
+                <h3>🎤 Voice Input</h3>
+                <div class="record-section">
                     <canvas class="visualizer" id="visualizer"></canvas>
                     <button class="record-btn" id="recordBtn">
                         <svg viewBox="0 0 24 24">
@@ -264,851 +624,1154 @@
                     </button>
                     <p id="recordingStatus" style="font-size:12px;">Click to start recording</p>
                 </div>
-                
-                <div class="panel">
-                    <h3>Options</h3>
-                    <div class="option-row">
-                        <label>Auto TTS playback</label>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="autoTtsToggle" checked>
-                            <span class="toggle-slider"></span>
-                        </label>
+
+                <h3>💡 LED State</h3>
+                <div class="led-panel">
+                    <div class="led-bulb-container">
+                        <div class="led-bulb led-bulb-off" id="ledBulb">
+                            <div class="bulb-filament">
+                                <div class="filament-wire"></div>
+                                <div class="filament-coil"></div>
+                            </div>
+                            <div class="bulb-glass"></div>
+                            <div class="bulb-threads"></div>
+                            <div class="bulb-base"></div>
+                        </div>
+                        <div class="led-status">
+                            <div class="led-status-text" id="ledStatusText">OFF</div>
+                            <div class="led-status-value" id="ledStatusValue">Power: Off</div>
+                        </div>
                     </div>
-                    <div class="option-row">
-                        <label>Auto send to LLM</label>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="autoLlmToggle" checked>
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <div style="margin-top:10px;">
-                        <label style="font-size:11px;color:#888;">Voice Selection</label>
-                        <select id="voiceSelect" style="width:100%;margin-top:5px;padding:6px 10px;border-radius:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.2);color:#fff;font-size:12px;">
-                            <option value="全部-湾湾小何" selected>湾湾小何</option>
-                            <option value="通用场景-甜美悦悦">甜美悦悦</option>
-                            <option value="通用场景-阳光青年">阳光青年</option>
-                            <option value="通用场景-清新女声">清新女声</option>
-                            <option value="通用场景-温暖阿虎">温暖阿虎</option>
-                        </select>
+
+                    <div class="controls-section">
+                        <div class="control-row">
+                            <span class="control-label">Power</span>
+                            <label class="power-switch">
+                                <input type="checkbox" id="ledPower">
+                                <span class="power-slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="control-row">
+                            <span class="control-label">Brightness: <span id="brightnessValue">50</span>%</span>
+                        </div>
+                        <input type="range" class="brightness-slider" id="brightnessSlider" min="0" max="100" value="50">
+
+                        <div class="control-row">
+                            <span class="control-label">Color</span>
+                        </div>
+                        <div class="color-presets">
+                            <div class="color-preset color-warm" data-color="warm" title="Warm"></div>
+                            <div class="color-preset color-cool" data-color="cool" title="Cool"></div>
+                            <div class="color-preset color-red" data-color="red" title="Red"></div>
+                            <div class="color-preset color-green" data-color="green" title="Green"></div>
+                            <div class="color-preset color-blue" data-color="blue" title="Blue"></div>
+                            <div class="color-preset color-purple" data-color="purple" title="Purple"></div>
+                            <div class="color-preset color-pink" data-color="pink" title="Pink"></div>
+                            <div class="color-preset color-white" data-color="white" title="White"></div>
+                        </div>
                     </div>
                 </div>
-                
-                <div class="panel">
-                    <h3>Statistics</h3>
-                    <div class="stats-panel">
-                        <div class="stat-item">
-                            <div class="stat-value" id="msgCount">0</div>
-                            <div class="stat-label">Messages</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="toolCount">0</div>
-                            <div class="stat-label">Tools</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="asrCount">0</div>
-                            <div class="stat-label">ASR</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="ttsCount">0</div>
-                            <div class="stat-label">TTS</div>
-                        </div>
-                    </div>
-                    <button class="btn btn-danger" id="clearBtn" style="width:100%;margin-top:10px;">Clear Messages</button>
+            </div>
+
+            <!-- Options Panel -->
+            <div class="panel">
+                <h3>⚙️ Options</h3>
+                <div class="option-row">
+                    <label>Auto send to LLM</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoLlmToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
-                
-                <button class="btn btn-primary" id="connectAllBtn" style="width:100%;padding:12px;font-size:14px;">Connect All Services</button>
+                <div class="option-row">
+                    <label>Auto TTS playback</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoTtsToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div style="margin-top:10px;">
+                    <label style="font-size:11px;color:#888;">Voice Selection</label>
+                    <select class="voice-select" id="voiceSelect">
+                        <option value="全部-湾湾小何" selected>湾湾小何</option>
+                        <option value="通用场景-甜美悦悦">甜美悦悦</option>
+                        <option value="通用场景-阳光青年">阳光青年</option>
+                        <option value="通用场景-清新女声">清新女声</option>
+                        <option value="通用场景-温暖阿虎">温暖阿虎</option>
+                    </select>
+                </div>
+
+                <h3 style="margin-top:20px;">📊 Statistics</h3>
+                <div class="stats-panel">
+                    <div class="stat-item">
+                        <div class="stat-value" id="msgCount">0</div>
+                        <div class="stat-label">Messages</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="toolCount">0</div>
+                        <div class="stat-label">Tools</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="asrCount">0</div>
+                        <div class="stat-label">ASR</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="ttsCount">0</div>
+                        <div class="stat-label">TTS</div>
+                    </div>
+                </div>
+
+                <button class="btn btn-danger" id="clearBtn" style="width:100%;margin-top:10px;">Clear Messages</button>
+            </div>
+
+            <!-- Chat & Commands -->
+            <div class="panel">
+                <h3>💬 Chat Input</h3>
+
+                <div class="input-section">
+                    <input type="text" id="chatInput" placeholder="Type or speak...">
+                    <button class="btn btn-primary" id="sendBtn">Send</button>
+                </div>
+
+                <div style="margin-top:15px;">
+                    <div style="font-size:11px;color:#888;margin-bottom:8px;">Quick Commands:</div>
+                    <div class="quick-actions">
+                        <button class="quick-btn" data-cmd="turn on the light">💡 Turn On</button>
+                        <button class="quick-btn" data-cmd="turn off the light">🌙 Off</button>
+                        <button class="quick-btn" data-cmd="set brightness to 80">🔆 80%</button>
+                        <button class="quick-btn" data-cmd="change to red">🔴 Red</button>
+                        <button class="quick-btn" data-cmd="change to blue">🔵 Blue</button>
+                        <button class="quick-btn" data-cmd="what is the current brightness">❓ Status</button>
+                    </div>
+                </div>
+
+                <div style="margin-top:20px;">
+                    <div style="font-size:11px;color:#888;margin-bottom:8px;">LED State:</div>
+                    <div style="background: rgba(0,0,0,0.3); padding:10px;border-radius:6px;font-family:monospace;font-size:11px;">
+                        <div>power: <span id="statePower" style="color:#ef5350;">false</span></div>
+                        <div>brightness: <span id="stateBrightness">50</span></div>
+                        <div>color: <span id="stateColor">warm</span></div>
+                        <div>rgb: <span id="stateRgb">rgb(255, 200, 100)</span></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        class ListenAIClient {
-            constructor() {
-                // WebSocket connections
-                this.asrWs = null;
-                this.llmWs = null;
-                this.ttsWs = null;
-                
-                // Connection states
-                this.asrConnected = false;
-                this.llmConnected = false;
-                this.ttsConnected = false;
-                
-                // Recording
-                this.audioContext = null;
-                this.analyser = null;
-                this.scriptProcessor = null;
-                this.mediaStream = null;
-                this.isRecording = false;
-                
-                // TTS playback
-                this.isPlaying = false;
-                this.audioQueue = [];
-                this.playbackContext = null;
-                this._nextPlayTime = 0;
-                this.activeSources = [];
-                this.currentRequestId = null;
-                
-                // Stats
-                this.stats = { messages: 0, tools: 0, asr: 0, tts: 0 };
-                
-                // Session
-                this.sessionId = null;
-                this.lastAsrText = '';
-                
-                this.initElements();
-                this.initEventListeners();
-                this.initVisualizer();
+        // LED State
+        const ledState = {
+            power: false,
+            brightness: 50,
+            color: 'warm',
+            colors: {
+                warm: { rgb: 'rgb(255, 200, 100)', glow: 'rgba(255, 200, 100, 0.8)' },
+                cool: { rgb: 'rgb(200, 220, 255)', glow: 'rgba(200, 220, 255, 0.8)' },
+                red: { rgb: 'rgb(255, 100, 100)', glow: 'rgba(255, 100, 100, 0.8)' },
+                green: { rgb: 'rgb(100, 255, 100)', glow: 'rgba(100, 255, 100, 0.8)' },
+                blue: { rgb: 'rgb(100, 150, 255)', glow: 'rgba(100, 150, 255, 0.8)' },
+                purple: { rgb: 'rgb(200, 100, 255)', glow: 'rgba(200, 100, 255, 0.8)' },
+                pink: { rgb: 'rgb(255, 150, 200)', glow: 'rgba(255, 150, 200, 0.8)' },
+                white: { rgb: 'rgb(255, 255, 255)', glow: 'rgba(255, 255, 255, 0.8)' }
             }
-            
-            initElements() {
-                // URLs
-                this.asrUrlInput = document.getElementById('asrUrl');
-                this.llmUrlInput = document.getElementById('llmUrl');
-                this.ttsUrlInput = document.getElementById('ttsUrl');
-                
-                // Status indicators
-                this.asrStatusDot = document.getElementById('asrStatusDot');
-                this.llmStatusDot = document.getElementById('llmStatusDot');
-                this.ttsStatusDot = document.getElementById('ttsStatusDot');
-                this.asrStatusText = document.getElementById('asrStatusText');
-                this.llmStatusText = document.getElementById('llmStatusText');
-                this.ttsStatusText = document.getElementById('ttsStatusText');
-                
-                // Buttons
-                this.asrConnectBtn = document.getElementById('asrConnectBtn');
-                this.llmConnectBtn = document.getElementById('llmConnectBtn');
-                this.ttsConnectBtn = document.getElementById('ttsConnectBtn');
-                this.connectAllBtn = document.getElementById('connectAllBtn');
-                this.recordBtn = document.getElementById('recordBtn');
-                this.clearBtn = document.getElementById('clearBtn');
-                
-                // Options
-                this.autoTtsToggle = document.getElementById('autoTtsToggle');
-                this.autoLlmToggle = document.getElementById('autoLlmToggle');
-                this.voiceSelect = document.getElementById('voiceSelect');
-                
-                // Other
-                this.messagesPanel = document.getElementById('messagesPanel');
-                this.visualizerCanvas = document.getElementById('visualizer');
-                this.flowIndicator = document.getElementById('flowIndicator');
-                this.recordingStatus = document.getElementById('recordingStatus');
-            }
-            
-            initEventListeners() {
-                this.asrConnectBtn.addEventListener('click', () => this.connectASR());
-                this.llmConnectBtn.addEventListener('click', () => this.connectLLM());
-                this.ttsConnectBtn.addEventListener('click', () => this.connectTTS());
-                this.connectAllBtn.addEventListener('click', () => this.connectAll());
-                this.recordBtn.addEventListener('click', () => this.toggleRecording());
-                this.clearBtn.addEventListener('click', () => this.clearMessages());
-            }
-            
-            initVisualizer() {
-                const canvas = this.visualizerCanvas;
-                const ctx = canvas.getContext('2d');
-                canvas.width = canvas.offsetWidth;
-                canvas.height = canvas.offsetHeight;
-                
-                const draw = () => {
-                    requestAnimationFrame(draw);
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    
-                    if (this.analyser && this.isRecording) {
-                        const bufferLength = this.analyser.frequencyBinCount;
-                        const dataArray = new Uint8Array(bufferLength);
-                        this.analyser.getByteFrequencyData(dataArray);
-                        
-                        const barWidth = (canvas.width / bufferLength) * 2.5;
-                        let x = 0;
-                        
-                        for (let i = 0; i < bufferLength; i++) {
-                            const barHeight = (dataArray[i] / 255) * canvas.height;
-                            ctx.fillStyle = `rgba(79, 195, 247, ${dataArray[i] / 255})`;
-                            ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-                            x += barWidth + 1;
+        };
+
+        // Client Tools Definition
+        const clientTools = [
+            {
+                name: 'led_power',
+                description: 'Control the LED power (on/off)',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        state: {
+                            type: 'boolean',
+                            description: 'true to turn on, false to turn off'
                         }
-                    }
-                };
-                draw();
-            }
-            
-            updateFlowIndicator() {
-                const allConnected = this.asrConnected && this.llmConnected && this.ttsConnected;
-                const anyConnected = this.asrConnected || this.llmConnected || this.ttsConnected;
-                
-                if (allConnected) {
-                    this.flowIndicator.textContent = '✓ All services connected - Ready to record';
-                    this.flowIndicator.style.background = 'rgba(102, 187, 106, 0.2)';
-                } else if (anyConnected) {
-                    const missing = [];
-                    if (!this.asrConnected) missing.push('ASR');
-                    if (!this.llmConnected) missing.push('LLM');
-                    if (!this.ttsConnected) missing.push('TTS');
-                    this.flowIndicator.textContent = `⚠ Missing: ${missing.join(', ')}`;
-                    this.flowIndicator.style.background = 'rgba(255, 167, 38, 0.2)';
-                } else {
-                    this.flowIndicator.textContent = 'Ready - Connect services to start';
-                    this.flowIndicator.style.background = 'rgba(79, 195, 247, 0.1)';
+                    },
+                    required: ['state']
+                },
+                handler: async (args) => {
+                    const state = args.state;
+                    ledState.power = state;
+                    updateLED();
+                    return { success: true, power: state, message: state ? 'LED turned on' : 'LED turned off' };
                 }
-            }
-            
-            // ========== ASR Connection ==========
-            async connectASR() {
-                if (this.asrConnected) {
-                    this.disconnectASR();
-                    return;
-                }
-                
-                const url = this.asrUrlInput.value;
-                this.addMessage('system', `Connecting to ASR: ${url}`);
-                
-                try {
-                    this.asrWs = new WebSocket(url);
-                    this.asrWs.binaryType = 'arraybuffer';
-                    
-                    this.asrWs.onopen = () => {
-                        this.asrConnected = true;
-                        this.updateASRStatus(true);
-                        this.addMessage('system', 'ASR connected');
-                        this.updateFlowIndicator();
-                    };
-                    
-                    this.asrWs.onmessage = (event) => {
-                        this.handleASRMessage(event.data);
-                    };
-                    
-                    this.asrWs.onclose = () => {
-                        this.asrConnected = false;
-                        this.updateASRStatus(false);
-                        this.addMessage('system', 'ASR disconnected');
-                        this.updateFlowIndicator();
-                    };
-                    
-                    this.asrWs.onerror = (error) => {
-                        this.addMessage('error', 'ASR connection error');
-                    };
-                } catch (error) {
-                    this.addMessage('error', `ASR connection failed: ${error.message}`);
-                }
-            }
-            
-            disconnectASR() {
-                if (this.asrWs) {
-                    this.asrWs.close();
-                    this.asrWs = null;
-                }
-                this.asrConnected = false;
-                this.updateASRStatus(false);
-                this.updateFlowIndicator();
-            }
-            
-            updateASRStatus(connected) {
-                this.asrStatusDot.classList.toggle('connected', connected);
-                this.asrStatusText.textContent = connected ? 'Connected' : 'Disconnected';
-                this.asrConnectBtn.textContent = connected ? 'Disconnect' : 'Connect';
-                this.asrConnectBtn.className = connected ? 'btn btn-danger' : 'btn btn-primary';
-                this.updateConnectAllButton();
-            }
-            
-            handleASRMessage(data) {
-                try {
-                    let message;
-                    if (data instanceof ArrayBuffer) {
-                        message = JSON.parse(new TextDecoder().decode(data));
-                    } else if (typeof data === 'string') {
-                        message = JSON.parse(data);
-                    } else {
-                        console.warn('Unknown ASR message type:', typeof data);
-                        return;
-                    }
-                    
-                    const text = message.text || '';
-                    const isFinal = message.is_final || false;
-                    
-                    this.stats.asr++;
-                    this.updateStats();
-                    
-                    this.addMessage('asr', `[ASR] ${isFinal ? 'Final' : 'Partial'}: ${text}`);
-                    
-                    if (isFinal && text) {
-                        this.lastAsrText = text;
-                        
-                        if (this.autoLlmToggle.checked && this.llmConnected) {
-                            this.sendToLLM(text);
+            },
+            {
+                name: 'led_set_brightness',
+                description: 'Set the LED brightness (0-100)',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        brightness: {
+                            type: 'integer',
+                            description: 'Brightness level from 0 to 100',
+                            minimum: 0,
+                            maximum: 100
                         }
+                    },
+                    required: ['brightness']
+                },
+                handler: async (args) => {
+                    const brightness = Math.max(0, Math.min(100, args.brightness));
+                    ledState.brightness = brightness;
+                    if (brightness > 0 && !ledState.power) {
+                        ledState.power = true;
                     }
-                } catch (e) {
-                    console.error('Failed to parse ASR message:', e);
+                    updateLED();
+                    return { success: true, brightness: brightness, message: `Brightness set to ${brightness}%` };
                 }
-            }
-            
-            // ========== LLM Connection ==========
-            async connectLLM() {
-                if (this.llmConnected) {
-                    this.disconnectLLM();
-                    return;
-                }
-                
-                const url = this.llmUrlInput.value;
-                this.addMessage('system', `Connecting to LLM Gateway: ${url}`);
-                
-                try {
-                    this.llmWs = new WebSocket(url);
-                    
-                    this.llmWs.onopen = () => {
-                        this.llmConnected = true;
-                        this.updateLLMStatus(true);
-                        this.addMessage('system', 'LLM Gateway connected');
-                        this.updateFlowIndicator();
-                    };
-                    
-                    this.llmWs.onmessage = (event) => {
-                        this.handleLLMMessage(JSON.parse(event.data));
-                    };
-                    
-                    this.llmWs.onclose = () => {
-                        this.llmConnected = false;
-                        this.updateLLMStatus(false);
-                        this.addMessage('system', 'LLM Gateway disconnected');
-                        this.updateFlowIndicator();
-                    };
-                    
-                    this.llmWs.onerror = (error) => {
-                        this.addMessage('error', 'LLM connection error');
-                    };
-                } catch (error) {
-                    this.addMessage('error', `LLM connection failed: ${error.message}`);
-                }
-            }
-            
-            disconnectLLM() {
-                if (this.llmWs) {
-                    this.llmWs.close();
-                    this.llmWs = null;
-                }
-                this.llmConnected = false;
-                this.updateLLMStatus(false);
-                this.updateFlowIndicator();
-            }
-            
-            updateLLMStatus(connected) {
-                this.llmStatusDot.classList.toggle('connected', connected);
-                this.llmStatusText.textContent = connected ? 'Connected' : 'Disconnected';
-                this.llmConnectBtn.textContent = connected ? 'Disconnect' : 'Connect';
-                this.llmConnectBtn.className = connected ? 'btn btn-danger' : 'btn btn-primary';
-                this.updateConnectAllButton();
-            }
-            
-            handleLLMMessage(data) {
-                const type = data.type;
-                this.stats.messages++;
-                this.updateStats();
-                
-                switch (type) {
-                    case 'status':
-                        if (data.status === 'connected') {
-                            this.sessionId = data.data?.session_id;
-                            this.addMessage('system', `Session: ${this.sessionId}`);
-                        } else {
-                            this.addMessage('system', `[Status] ${data.status}`);
+            },
+            {
+                name: 'led_set_color',
+                description: 'Set the LED color by name',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        color: {
+                            type: 'string',
+                            description: 'Color name: warm, cool, red, green, blue, purple, pink, white',
+                            enum: ['warm', 'cool', 'red', 'green', 'blue', 'purple', 'pink', 'white']
                         }
-                        break;
-                    case 'llm_response':
-                        this.addMessage('llm', `[LLM] ${data.content}`);
-                        if (this.autoTtsToggle.checked && data.content && this.ttsConnected) {
-                            this.sendToTTS(data.content);
+                    },
+                    required: ['color']
+                },
+                handler: async (args) => {
+                    const color = args.color;
+                    if (ledState.colors[color]) {
+                        ledState.color = color;
+                        if (!ledState.power) {
+                            ledState.power = true;
                         }
-                        break;
-                    case 'tool_call':
-                        this.stats.tools++;
-                        this.updateStats();
-                        this.addMessage('tool', `[Tool] ${data.tool_name}(${JSON.stringify(data.arguments)}) -> ${JSON.stringify(data.result)}`);
-                        break;
-                    case 'error':
-                        this.addMessage('error', `[Error] ${data.code}: ${data.message}`);
-                        break;
-                    case 'pong':
-                        this.addMessage('system', '[Pong] LLM Gateway responded');
-                        break;
+                        updateLED();
+                        return { success: true, color: color, rgb: ledState.colors[color].rgb, message: `Color changed to ${color}` };
+                    }
+                    return { success: false, error: `Unknown color: ${color}` };
                 }
-            }
-            
-            sendToLLM(text) {
-                if (!this.llmConnected || !this.llmWs) {
-                    this.addMessage('error', 'LLM not connected');
-                    return;
-                }
-                
-                const message = {
-                    type: 'text_input',
-                    text: text,
-                    session_id: this.sessionId
-                };
-                
-                this.llmWs.send(JSON.stringify(message));
-                this.addMessage('system', `[Sent to LLM] ${text.substring(0, 50)}...`);
-            }
-            
-            // ========== TTS Connection ==========
-            async connectTTS() {
-                if (this.ttsConnected) {
-                    this.disconnectTTS();
-                    return;
-                }
-                
-                const url = this.ttsUrlInput.value;
-                this.addMessage('system', `Connecting to TTS: ${url}`);
-                
-                try {
-                    this.ttsWs = new WebSocket(url);
-                    this.ttsWs.binaryType = 'arraybuffer';
-                    
-                    this.ttsWs.onopen = () => {
-                        this.ttsConnected = true;
-                        this.updateTTSStatus(true);
-                        this.addMessage('system', 'TTS connected');
-                        this.updateFlowIndicator();
-                    };
-                    
-                    this.ttsWs.onmessage = (event) => {
-                        if (event.data instanceof ArrayBuffer) {
-                            this.handleTTSAudio(event.data);
-                        } else {
-                            this.handleTTSMessage(JSON.parse(event.data));
-                        }
-                    };
-                    
-                    this.ttsWs.onclose = () => {
-                        this.ttsConnected = false;
-                        this.updateTTSStatus(false);
-                        this.addMessage('system', 'TTS disconnected');
-                        this.updateFlowIndicator();
-                    };
-                    
-                    this.ttsWs.onerror = (error) => {
-                        this.addMessage('error', 'TTS connection error');
-                    };
-                } catch (error) {
-                    this.addMessage('error', `TTS connection failed: ${error.message}`);
-                }
-            }
-            
-            disconnectTTS() {
-                if (this.ttsWs) {
-                    this.ttsWs.close();
-                    this.ttsWs = null;
-                }
-                this.ttsConnected = false;
-                this.updateTTSStatus(false);
-                this.updateFlowIndicator();
-            }
-            
-            updateTTSStatus(connected) {
-                this.ttsStatusDot.classList.toggle('connected', connected);
-                this.ttsStatusText.textContent = connected ? 'Connected' : 'Disconnected';
-                this.ttsConnectBtn.textContent = connected ? 'Disconnect' : 'Connect';
-                this.ttsConnectBtn.className = connected ? 'btn btn-danger' : 'btn btn-primary';
-                this.updateConnectAllButton();
-            }
-            
-            handleTTSMessage(data) {
-                const type = data.type;
-                
-                switch (type) {
-                    case 'complete':
-                        this.addMessage('tts', '[TTS] Synthesis complete');
-                        break;
-                    case 'error':
-                        this.addMessage('error', `[TTS Error] ${data.error?.message || 'Unknown error'}`);
-                        break;
-                    case 'progress':
-                        this.addMessage('tts', `[TTS] ${data.state} - ${data.message || ''}`);
-                        break;
-                }
-            }
-            
-            handleTTSAudio(data) {
-                const parsed = this.parseTTSFrame(data);
-                if (parsed && parsed.audio && parsed.audio.length > 0) {
-                    const requestId = parsed.metadata?.request_id;
-                    
-                    if (requestId && requestId !== this.currentRequestId) {
-                        this.stopAllAudio();
-                        this.currentRequestId = requestId;
-                        this.addMessage('tts', '[TTS] New request, stopped previous audio');
-                    }
-                    
-                    this.stats.tts++;
-                    this.updateStats();
-                    
-                    const chunk = {
-                        data: parsed.audio,
-                        sampleRate: parsed.sampleRate || 16000
-                    };
-                    
-                    if (!this.playbackContext) {
-                        this.playbackContext = new (window.AudioContext || window.webkitAudioContext)();
-                    }
-                    
-                    if (this.playbackContext.state === 'suspended') {
-                        this.playbackContext.resume();
-                    }
-                    
-                    if (!this.isPlaying) {
-                        this.isPlaying = true;
-                        this._nextPlayTime = this.playbackContext.currentTime;
-                        this.addMessage('tts', '[TTS] Playing audio...');
-                    }
-                    
-                    this.audioQueue.push(chunk);
-                    
-                    while (this.audioQueue.length > 0) {
-                        const currentChunk = this.audioQueue.shift();
-                        const audioData = currentChunk.data;
-                        const sampleRate = currentChunk.sampleRate || 16000;
-                        
-                        if (!audioData || audioData.length === 0) {
-                            continue;
-                        }
-                        
-                        const float32Buffer = new Float32Array(audioData.length);
-                        for (let i = 0; i < audioData.length; i++) {
-                            float32Buffer[i] = audioData[i] / 32768.0;
-                        }
-                        
-                        const audioBuffer = this.playbackContext.createBuffer(1, float32Buffer.length, sampleRate);
-                        audioBuffer.getChannelData(0).set(float32Buffer);
-                        
-                        let startTime = this._nextPlayTime;
-                        const currentTime = this.playbackContext.currentTime;
-                        if (startTime < currentTime) {
-                            startTime = currentTime;
-                        }
-                        
-                        const source = this.playbackContext.createBufferSource();
-                        source.buffer = audioBuffer;
-                        source.connect(this.playbackContext.destination);
-                        source.start(startTime);
-                        
-                        this.activeSources.push(source);
-                        source.onended = () => {
-                            const idx = this.activeSources.indexOf(source);
-                            if (idx > -1) this.activeSources.splice(idx, 1);
-                        };
-                        
-                        this._nextPlayTime = startTime + audioBuffer.duration;
-                    }
-                    
-                } else if (parsed && parsed.metadata) {
-                    if (parsed.metadata.is_final) {
-                        this.isPlaying = false;
-                        this.currentRequestId = null;
-                        this.addMessage('tts', '[TTS] Audio stream complete');
-                    }
-                }
-            }
-            
-            stopAllAudio() {
-                for (const source of this.activeSources) {
-                    try {
-                        source.stop();
-                    } catch (e) {}
-                }
-                this.activeSources = [];
-                this.audioQueue = [];
-                this.isPlaying = false;
-                this._nextPlayTime = 0;
-            }
-            
-            parseTTSFrame(buffer) {
-                try {
-                    const view = new DataView(buffer);
-                    
-                    if (buffer.byteLength < 8) {
-                        console.warn('TTS frame too short:', buffer.byteLength);
-                        return null;
-                    }
-                    
-                    const magic = view.getUint16(0, false);
-                    if (magic !== 0xAA55) {
-                        console.warn('TTS frame invalid magic:', magic.toString(16));
-                        return null;
-                    }
-                    
-                    const msgType = view.getUint8(2);
-                    const metadataLength = view.getUint32(4, false);
-                    
-                    console.log('TTS frame: magic=0x' + magic.toString(16) + ', msgType=' + msgType + ', metaLen=' + metadataLength + ', totalLen=' + buffer.byteLength);
-                    
-                    if (buffer.byteLength < 8 + metadataLength + 4) {
-                        console.warn('TTS frame incomplete');
-                        return null;
-                    }
-                    
-                    const metadataBytes = new Uint8Array(buffer, 8, metadataLength);
-                    const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
-                    
-                    console.log('TTS metadata:', metadata);
-                    
-                    const payloadLengthOffset = 8 + metadataLength;
-                    const payloadLength = view.getUint32(payloadLengthOffset, false);
-                    const audioDataOffset = payloadLengthOffset + 4;
-                    
-                    console.log('TTS payload: length=' + payloadLength + ', offset=' + audioDataOffset);
-                    
-                    if (payloadLength === 0) {
-                        return {
-                            metadata: metadata,
-                            audio: null,
-                            sampleRate: metadata.sample_rate || 16000
-                        };
-                    }
-                    
-                    const audioDataBytes = new Uint8Array(buffer, audioDataOffset, payloadLength);
-                    
-                    const audioData = new Int16Array(audioDataBytes.length / 2);
-                    for (let i = 0; i < audioData.length; i++) {
-                        const lowByte = audioDataBytes[i * 2];
-                        const highByte = audioDataBytes[i * 2 + 1];
-                        audioData[i] = lowByte | (highByte << 8);
-                    }
-                    
-                    console.log('TTS audio: samples=' + audioData.length + ', sampleRate=' + (metadata.sample_rate || 16000));
-                    
+            },
+            {
+                name: 'led_get_state',
+                description: 'Get the current LED state',
+                parameters: {
+                    type: 'object',
+                    properties: {},
+                    required: []
+                },
+                handler: async (args) => {
                     return {
-                        metadata: metadata,
-                        audio: audioData,
-                        sampleRate: metadata.sample_rate || 16000
+                        success: true,
+                        state: {
+                            power: ledState.power,
+                            brightness: ledState.brightness,
+                            color: ledState.color,
+                            rgb: ledState.colors[ledState.color].rgb
+                        }
                     };
-                } catch (e) {
-                    console.error('Failed to parse TTS frame:', e);
-                    return null;
+                }
+            },
+            {
+                name: 'led_toggle',
+                description: 'Toggle the LED power on/off',
+                parameters: {
+                    type: 'object',
+                    properties: {},
+                    required: []
+                },
+                handler: async (args) => {
+                    ledState.power = !ledState.power;
+                    updateLED();
+                    return { success: true, power: ledState.power, message: ledState.power ? 'LED turned on' : 'LED turned off' };
                 }
             }
-            
-            scheduleChunk(chunk) {
+        ];
+
+        // WebSocket connections
+        let asrWs = null, llmWs = null, ttsWs = null;
+        let asrConnected = false, llmConnected = false, ttsConnected = false;
+        let sessionId = null;
+
+        // Recording
+        let audioContext = null, analyser = null, scriptProcessor = null, mediaStream = null;
+        let isRecording = false;
+
+        // TTS playback
+        let playbackContext = null, _nextPlayTime = 0, activeSources = [];
+        let currentRequestId = null;
+
+        // Stats
+        const stats = { messages: 0, tools: 0, asr: 0, tts: 0, registered: 0, callbacks: 0 };
+
+        // Initialize
+        function init() {
+            initEventListeners();
+            initVisualizer();
+            updateLED();
+        }
+
+        function initEventListeners() {
+            // Connection buttons
+            document.getElementById('asrConnectBtn').addEventListener('click', toggleASR);
+            document.getElementById('llmConnectBtn').addEventListener('click', toggleLLM);
+            document.getElementById('ttsConnectBtn').addEventListener('click', toggleTTS);
+
+            // Recording
+            document.getElementById('recordBtn').addEventListener('click', toggleRecording);
+
+            // LED controls
+            document.getElementById('ledPower').addEventListener('change', (e) => {
+                ledState.power = e.target.checked;
+                updateLED();
+            });
+
+            document.getElementById('brightnessSlider').addEventListener('input', (e) => {
+                ledState.brightness = parseInt(e.target.value);
+                document.getElementById('brightnessValue').textContent = ledState.brightness;
+                if (ledState.brightness > 0 && !ledState.power) {
+                    ledState.power = true;
+                    document.getElementById('ledPower').checked = true;
+                }
+                updateLED();
+            });
+
+            document.querySelectorAll('.color-preset').forEach(el => {
+                el.addEventListener('click', () => {
+                    document.querySelectorAll('.color-preset').forEach(e => e.classList.remove('active'));
+                    el.classList.add('active');
+                    ledState.color = el.dataset.color;
+                    if (!ledState.power) {
+                        ledState.power = true;
+                        document.getElementById('ledPower').checked = true;
+                    }
+                    updateLED();
+                });
+            });
+
+            // Chat
+            document.getElementById('sendBtn').addEventListener('click', sendChat);
+            document.getElementById('chatInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendChat();
+            });
+
+            // Quick commands
+            document.querySelectorAll('.quick-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.getElementById('chatInput').value = btn.dataset.cmd;
+                    sendChat();
+                });
+            });
+
+            // Clear
+            document.getElementById('clearBtn').addEventListener('click', clearMessages);
+
+            // Connect All
+            document.getElementById('connectAllBtn').addEventListener('click', connectAllServices);
+        }
+
+        function initVisualizer() {
+            const canvas = document.getElementById('visualizer');
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+
+            const draw = () => {
+                requestAnimationFrame(draw);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                if (analyser && isRecording) {
+                    const bufferLength = analyser.frequencyBinCount;
+                    const dataArray = new Uint8Array(bufferLength);
+                    analyser.getByteFrequencyData(dataArray);
+
+                    const barWidth = (canvas.width / bufferLength) * 2.5;
+                    let x = 0;
+
+                    for (let i = 0; i < bufferLength; i++) {
+                        const barHeight = (dataArray[i] / 255) * canvas.height;
+                        ctx.fillStyle = `rgba(79, 195, 247, ${dataArray[i] / 255})`;
+                        ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                        x += barWidth + 1;
+                    }
+                }
+            };
+            draw();
+        }
+
+        // ========== Connect All ==========
+        async function connectAllServices() {
+            const btn = document.getElementById('connectAllBtn');
+            const allConnected = asrConnected && llmConnected && ttsConnected;
+
+            btn.disabled = true;
+
+            if (allConnected) {
+                // Disconnect all
+                btn.textContent = '⏳ Disconnecting...';
+                disconnectASR();
+                disconnectLLM();
+                disconnectTTS();
+                await new Promise(resolve => setTimeout(resolve, 200));
+                btn.textContent = '⚡ Connect All';
+                btn.style.background = 'linear-gradient(135deg, #66bb6a 0%, #4fc3f7 100%)';
+            } else {
+                // Connect all
+                btn.textContent = '⏳ Connecting...';
+                await Promise.all([
+                    asrConnected ? Promise.resolve() : connectASR(),
+                    llmConnected ? Promise.resolve() : connectLLM(),
+                    ttsConnected ? Promise.resolve() : connectTTS()
+                ]);
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+            updateFlowIndicator();
+            btn.disabled = false;
+        }
+
+        // ========== ASR Connection ==========
+        async function toggleASR() {
+            if (asrConnected) {
+                disconnectASR();
+            } else {
+                await connectASR();
+            }
+        }
+
+        async function connectASR() {
+            const url = document.getElementById('asrUrl').value;
+            addMessage('system', `Connecting to ASR: ${url}`);
+
+            try {
+                asrWs = new WebSocket(url);
+                asrWs.binaryType = 'arraybuffer';
+
+                asrWs.onopen = () => {
+                    asrConnected = true;
+                    updateASRStatus(true);
+                    addMessage('system', 'ASR connected');
+                    updateFlowIndicator();
+                };
+
+                asrWs.onmessage = (event) => handleASRMessage(event.data);
+
+                asrWs.onclose = () => {
+                    asrConnected = false;
+                    updateASRStatus(false);
+                    addMessage('system', 'ASR disconnected');
+                    updateFlowIndicator();
+                };
+
+                asrWs.onerror = () => {
+                    addMessage('error', 'ASR connection error');
+                };
+            } catch (error) {
+                addMessage('error', `ASR connection failed: ${error.message}`);
+            }
+        }
+
+        function disconnectASR() {
+            if (asrWs) {
+                asrWs.close();
+                asrWs = null;
+            }
+            asrConnected = false;
+            updateASRStatus(false);
+            updateFlowIndicator();
+        }
+
+        function updateASRStatus(connected) {
+            const dot = document.getElementById('asrStatusDot');
+            const text = document.getElementById('asrStatusText');
+            const btn = document.getElementById('asrConnectBtn');
+
+            dot.classList.toggle('connected', connected);
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+            btn.textContent = connected ? 'Disconnect' : 'Connect';
+            btn.className = connected ? 'btn btn-danger' : 'btn btn-primary';
+        }
+
+        function handleASRMessage(data) {
+            try {
+                let message;
+                if (data instanceof ArrayBuffer) {
+                    message = JSON.parse(new TextDecoder().decode(data));
+                } else if (typeof data === 'string') {
+                    message = JSON.parse(data);
+                } else {
+                    return;
+                }
+
+                const text = message.text || '';
+                const isFinal = message.is_final || false;
+
+                stats.asr++;
+                updateStats();
+
+                addMessage('asr', `[ASR] ${isFinal ? 'Final' : 'Partial'}: ${text}`);
+
+                if (isFinal && text) {
+                    if (document.getElementById('autoLlmToggle').checked && llmConnected) {
+                        sendToLLM(text);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to parse ASR message:', e);
+            }
+        }
+
+        // ========== LLM Connection ==========
+        async function toggleLLM() {
+            if (llmConnected) {
+                disconnectLLM();
+            } else {
+                await connectLLM();
+            }
+        }
+
+        async function connectLLM() {
+            const url = document.getElementById('llmUrl').value;
+            addMessage('system', `Connecting to LLM Gateway: ${url}`);
+
+            try {
+                llmWs = new WebSocket(url);
+
+                llmWs.onopen = () => {
+                    llmConnected = true;
+                    updateLLMStatus(true);
+                    addMessage('system', 'LLM Gateway connected');
+                    updateFlowIndicator();
+                };
+
+                llmWs.onmessage = (event) => {
+                    console.log(`[Client] WebSocket message received (raw):`, event.data);
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log(`[Client] WebSocket message parsed:`, data);
+                        handleLLMMessage(data);
+                    } catch (e) {
+                        console.error(`[Client] Failed to parse WebSocket message:`, e);
+                    }
+                };
+
+                llmWs.onclose = () => {
+                    console.log(`[Client] WebSocket closed`);
+                    llmConnected = false;
+                    updateLLMStatus(false);
+                    addMessage('system', 'LLM Gateway disconnected');
+                    updateFlowIndicator();
+                };
+
+                llmWs.onerror = (error) => {
+                    console.error(`[Client] WebSocket error:`, error);
+                    addMessage('error', 'LLM connection error');
+                };
+            } catch (error) {
+                addMessage('error', `LLM connection failed: ${error.message}`);
+            }
+        }
+
+        function disconnectLLM() {
+            if (llmWs) {
+                llmWs.close();
+                llmWs = null;
+            }
+            llmConnected = false;
+            updateLLMStatus(false);
+            updateFlowIndicator();
+        }
+
+        function updateLLMStatus(connected) {
+            const dot = document.getElementById('llmStatusDot');
+            const text = document.getElementById('llmStatusText');
+            const btn = document.getElementById('llmConnectBtn');
+
+            dot.classList.toggle('connected', connected);
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+            btn.textContent = connected ? 'Disconnect' : 'Connect';
+            btn.className = connected ? 'btn btn-danger' : 'btn btn-primary';
+        }
+
+        function handleLLMMessage(data) {
+            stats.messages++;
+            updateStats();
+
+            console.log(`[Client] Received LLM message: type=${data.type}`, data);
+
+            switch (data.type) {
+                case 'status':
+                    if (data.status === 'connected') {
+                        sessionId = data.data?.session_id;
+                        addMessage('system', `Session: ${sessionId}`);
+                        registerClientTools();
+                    } else {
+                        addMessage('system', `[Status] ${data.status}`);
+                    }
+                    break;
+
+                case 'tools_registered':
+                    stats.registered = data.count;
+                    updateStats();
+                    addMessage('system', `✓ Registered ${data.count} client tools`);
+                    updateToolsList(data.tools);
+                    break;
+
+                case 'tool_callback':
+                    console.log(`[Client] Calling handleToolCallback with data:`, data);
+                    handleToolCallback(data);
+                    break;
+
+                case 'llm_response':
+                    addMessage('llm', `[LLM] ${data.content}`);
+                    if (document.getElementById('autoTtsToggle').checked && data.content && ttsConnected) {
+                        sendToTTS(data.content);
+                    }
+                    break;
+
+                case 'tool_call':
+                    stats.tools++;
+                    updateStats();
+                    addMessage('tool', `[Server Tool] ${data.tool_name}(${JSON.stringify(data.arguments)}) → ${JSON.stringify(data.result)}`);
+                    break;
+
+                case 'error':
+                    addMessage('error', `[Error] ${data.code}: ${data.message}`);
+                    break;
+
+                case 'pong':
+                    addMessage('system', '[Pong]');
+                    break;
+
+                default:
+                    console.warn(`[Client] Unknown message type: ${data.type}`, data);
+            }
+        }
+
+        function sendToLLM(text) {
+            if (!llmConnected || !llmWs) return;
+
+            const request = {
+                type: 'text_input',
+                text: text,
+                session_id: sessionId
+            };
+
+            llmWs.send(JSON.stringify(request));
+            addMessage('system', `[Sent to LLM] ${text.substring(0, 50)}...`);
+        }
+
+        function registerClientTools() {
+            const toolsDefinition = clientTools.map(tool => ({
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters
+            }));
+
+            const request = {
+                type: 'register_tools',
+                tools: toolsDefinition
+            };
+
+            llmWs.send(JSON.stringify(request));
+            addMessage('system', `Registering ${toolsDefinition.length} client tools...`);
+        }
+
+        function handleToolCallback(data) {
+            const startTime = Date.now();
+            stats.callbacks++;
+            updateStats();
+
+            const { call_id, tool_name, arguments: args } = data;
+            console.log(`[Client] Tool callback received: ${tool_name}(${JSON.stringify(args)}) at ${new Date().toISOString()}`);
+            addMessage('tool-callback', `[Tool Callback] ${tool_name}(${JSON.stringify(args)})`);
+
+            const tool = clientTools.find(t => t.name === tool_name);
+            if (tool) {
+                console.log(`[Client] Found tool: ${tool_name}, executing handler...`);
+                tool.handler(args)
+                    .then(result => {
+                        const elapsed = Date.now() - startTime;
+                        console.log(`[Client] Tool ${tool_name} completed in ${elapsed}ms, result:`, result);
+                        addMessage('tool', `[Tool Result] ${tool_name}: ${JSON.stringify(result)}`);
+                        sendToolResult(call_id, result, true);
+                    })
+                    .catch(error => {
+                        const elapsed = Date.now() - startTime;
+                        console.error(`[Client] Tool ${tool_name} failed after ${elapsed}ms:`, error);
+                        addMessage('error', `[Tool Error] ${tool_name}: ${error.message}`);
+                        sendToolResult(call_id, null, false, error.message);
+                    });
+            } else {
+                console.error(`[Client] Unknown tool: ${tool_name}`);
+                addMessage('error', `[Tool Error] Unknown tool: ${tool_name}`);
+                sendToolResult(call_id, null, false, 'Tool not found');
+            }
+        }
+
+        function sendToolResult(callId, result, success, error = null) {
+            console.log(`[Client] sendToolResult called: call_id=${callId}, success=${success}`, result);
+            const message = {
+                type: 'tool_result',
+                call_id: callId,
+                success: success
+            };
+
+            if (success) {
+                message.result = result;
+            } else {
+                message.error = error;
+            }
+
+            console.log(`[Client] Sending tool_result message:`, message);
+            llmWs.send(JSON.stringify(message));
+            console.log(`[Client] Tool result message sent`);
+        }
+
+        // ========== TTS Connection ==========
+        async function toggleTTS() {
+            if (ttsConnected) {
+                disconnectTTS();
+            } else {
+                await connectTTS();
+            }
+        }
+
+        async function connectTTS() {
+            const url = document.getElementById('ttsUrl').value;
+            addMessage('system', `Connecting to TTS: ${url}`);
+
+            try {
+                ttsWs = new WebSocket(url);
+                ttsWs.binaryType = 'arraybuffer';
+
+                ttsWs.onopen = () => {
+                    ttsConnected = true;
+                    updateTTSStatus(true);
+                    addMessage('system', 'TTS connected');
+                    updateFlowIndicator();
+                };
+
+                ttsWs.onmessage = (event) => {
+                    if (event.data instanceof ArrayBuffer) {
+                        handleTTSAudio(event.data);
+                    } else {
+                        handleTTSMessage(JSON.parse(event.data));
+                    }
+                };
+
+                ttsWs.onclose = () => {
+                    ttsConnected = false;
+                    updateTTSStatus(false);
+                    addMessage('system', 'TTS disconnected');
+                    updateFlowIndicator();
+                };
+
+                ttsWs.onerror = () => {
+                    addMessage('error', 'TTS connection error');
+                };
+            } catch (error) {
+                addMessage('error', `TTS connection failed: ${error.message}`);
+            }
+        }
+
+        function disconnectTTS() {
+            if (ttsWs) {
+                ttsWs.close();
+                ttsWs = null;
+            }
+            ttsConnected = false;
+            updateTTSStatus(false);
+            updateFlowIndicator();
+        }
+
+        function updateTTSStatus(connected) {
+            const dot = document.getElementById('ttsStatusDot');
+            const text = document.getElementById('ttsStatusText');
+            const btn = document.getElementById('ttsConnectBtn');
+
+            dot.classList.toggle('connected', connected);
+            text.textContent = connected ? 'Connected' : 'Disconnected';
+            btn.textContent = connected ? 'Disconnect' : 'Connect';
+            btn.className = connected ? 'btn btn-danger' : 'btn btn-primary';
+        }
+
+        function handleTTSMessage(data) {
+            switch (data.type) {
+                case 'complete':
+                    addMessage('tts', '[TTS] Synthesis complete');
+                    break;
+                case 'error':
+                    addMessage('error', `[TTS Error] ${data.error?.message || 'Unknown error'}`);
+                    break;
+                case 'progress':
+                    addMessage('tts', `[TTS] ${data.state} - ${data.message || ''}`);
+                    break;
+            }
+        }
+
+        function handleTTSAudio(data) {
+            const parsed = parseTTSFrame(data);
+            if (parsed && parsed.audio && parsed.audio.length > 0) {
+                const requestId = parsed.metadata?.request_id;
+
+                if (requestId && requestId !== currentRequestId) {
+                    stopAllAudio();
+                    _nextPlayTime = 0;
+                    currentRequestId = requestId;
+                }
+
+                stats.tts++;
+                updateStats();
+
+                const chunk = {
+                    data: parsed.audio,
+                    sampleRate: parsed.sampleRate || 16000
+                };
+
+                if (!playbackContext) {
+                    playbackContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                if (playbackContext.state === 'suspended') {
+                    playbackContext.resume();
+                }
+
                 const audioData = chunk.data;
                 const sampleRate = chunk.sampleRate || 16000;
-                
-                if (!audioData || audioData.length === 0) {
-                    return;
-                }
-                
+
                 const float32Buffer = new Float32Array(audioData.length);
                 for (let i = 0; i < audioData.length; i++) {
                     float32Buffer[i] = audioData[i] / 32768.0;
                 }
-                
-                const audioBuffer = this.playbackContext.createBuffer(1, float32Buffer.length, sampleRate);
+
+                const audioBuffer = playbackContext.createBuffer(1, float32Buffer.length, sampleRate);
                 audioBuffer.getChannelData(0).set(float32Buffer);
-                
-                let startTime = this._nextPlayTime;
-                const currentTime = this.playbackContext.currentTime;
-                if (startTime < currentTime) {
-                    startTime = currentTime;
+
+                // Calculate when to start playing this chunk
+                const currentTime = playbackContext.currentTime;
+                if (_nextPlayTime < currentTime) {
+                    _nextPlayTime = currentTime;
                 }
-                
-                const source = this.playbackContext.createBufferSource();
+
+                const duration = audioBuffer.duration;
+                const startTime = _nextPlayTime;
+                _nextPlayTime += duration;
+
+                const source = playbackContext.createBufferSource();
                 source.buffer = audioBuffer;
-                source.connect(this.playbackContext.destination);
+                source.connect(playbackContext.destination);
                 source.start(startTime);
-                
-                this._nextPlayTime = startTime + audioBuffer.duration;
-                
+
+                activeSources.push(source);
                 source.onended = () => {
-                    if (this.audioQueue.length > 0) {
-                        const nextChunk = this.audioQueue.shift();
-                        this.scheduleChunk(nextChunk);
-                    } else {
-                        this.isPlaying = false;
-                    }
+                    const idx = activeSources.indexOf(source);
+                    if (idx > -1) activeSources.splice(idx, 1);
                 };
-            }
-            
-            startStreamingPlayback() {
-                if (!this.playbackContext) {
-                    this.playbackContext = new (window.AudioContext || window.webkitAudioContext)();
-                }
-                
-                if (this.playbackContext.state === 'suspended') {
-                    this.playbackContext.resume();
-                }
-                
-                this.isPlaying = true;
-                this._nextPlayTime = this.playbackContext.currentTime;
-                
-                if (this.audioQueue.length > 0) {
-                    const firstChunk = this.audioQueue.shift();
-                    this.scheduleChunk(firstChunk);
-                }
-            }
-            
-            sendToTTS(text) {
-                if (!this.ttsConnected || !this.ttsWs) {
-                    this.addMessage('error', 'TTS not connected');
-                    return;
-                }
-                
-                const voiceId = this.voiceSelect.value || '全部-湾湾小何';
-                const request = {
-                    type: 'tts_request',
-                    request_id: crypto.randomUUID(),
-                    params: {
-                        text: text,
-                        mode: 'streaming',
-                        voice_id: voiceId
-                    }
-                };
-                
-                this.ttsWs.send(JSON.stringify(request));
-                this.addMessage('tts', `[TTS] Request sent (${voiceId}): ${text.substring(0, 30)}...`);
-            }
-            
-            // ========== Recording ==========
-            async toggleRecording() {
-                if (this.isRecording) {
-                    this.stopRecording();
-                } else {
-                    await this.startRecording();
-                }
-            }
-            
-            async startRecording() {
-                if (!this.asrConnected) {
-                    this.addMessage('error', 'ASR not connected - cannot record');
-                    return;
-                }
-                
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            sampleRate: 16000
-                        }
-                    });
-                    
-                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                        sampleRate: 16000
-                    });
-                    
-                    this.analyser = this.audioContext.createAnalyser();
-                    const source = this.audioContext.createMediaStreamSource(stream);
-                    source.connect(this.analyser);
-                    this.analyser.fftSize = 256;
-                    
-                    const bufferSize = 4096;
-                    this.scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
-                    source.connect(this.scriptProcessor);
-                    this.scriptProcessor.connect(this.audioContext.destination);
-                    
-                    this.scriptProcessor.onaudioprocess = (e) => {
-                        if (this.isRecording && this.asrWs && this.asrWs.readyState === WebSocket.OPEN) {
-                            const inputData = e.inputBuffer.getChannelData(0);
-                            const pcmData = this.float32ToInt16(inputData);
-                            this.asrWs.send(pcmData);
-                        }
-                    };
-                    
-                    this.mediaStream = stream;
-                    this.isRecording = true;
-                    this.recordBtn.classList.add('recording');
-                    this.recordingStatus.textContent = 'Recording... Click to stop';
-                    
-                } catch (error) {
-                    this.addMessage('error', `Microphone access denied: ${error.message}`);
-                }
-            }
-            
-            stopRecording() {
-                if (this.mediaStream) {
-                    this.mediaStream.getTracks().forEach(track => track.stop());
-                }
-                if (this.scriptProcessor) {
-                    this.scriptProcessor.disconnect();
-                }
-                this.isRecording = false;
-                this.recordBtn.classList.remove('recording');
-                this.recordingStatus.textContent = 'Click to start recording';
-            }
-            
-            float32ToInt16(float32Array) {
-                const buffer = new ArrayBuffer(float32Array.length * 2);
-                const view = new DataView(buffer);
-                for (let i = 0; i < float32Array.length; i++) {
-                    let s = Math.max(-1, Math.min(1, float32Array[i]));
-                    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-                }
-                return buffer;
-            }
-            
-            // ========== Utilities ==========
-            connectAll() {
-                const allConnected = this.asrConnected && this.llmConnected && this.ttsConnected;
-                
-                if (allConnected) {
-                    // Disconnect all
-                    if (this.asrConnected) this.disconnectASR();
-                    if (this.llmConnected) this.disconnectLLM();
-                    if (this.ttsConnected) this.disconnectTTS();
-                    this.connectAllBtn.textContent = 'Connect All Services';
-                    this.connectAllBtn.className = 'btn btn-primary';
-                } else {
-                    // Connect all
-                    if (!this.asrConnected) this.connectASR();
-                    if (!this.llmConnected) this.connectLLM();
-                    if (!this.ttsConnected) this.connectTTS();
-                    this.connectAllBtn.textContent = 'Disconnect All Services';
-                    this.connectAllBtn.className = 'btn btn-danger';
-                }
-            }
-            
-            updateConnectAllButton() {
-                const allConnected = this.asrConnected && this.llmConnected && this.ttsConnected;
-                if (allConnected) {
-                    this.connectAllBtn.textContent = 'Disconnect All Services';
-                    this.connectAllBtn.className = 'btn btn-danger';
-                } else {
-                    this.connectAllBtn.textContent = 'Connect All Services';
-                    this.connectAllBtn.className = 'btn btn-primary';
-                }
-            }
-            
-            addMessage(type, text) {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = `message message-${type}`;
-                
-                const timeDiv = document.createElement('div');
-                timeDiv.className = 'message-time';
-                timeDiv.textContent = new Date().toLocaleTimeString();
-                
-                const textDiv = document.createElement('div');
-                textDiv.textContent = text;
-                
-                messageDiv.appendChild(timeDiv);
-                messageDiv.appendChild(textDiv);
-                
-                this.messagesPanel.appendChild(messageDiv);
-                this.messagesPanel.scrollTop = this.messagesPanel.scrollHeight;
-            }
-            
-            updateStats() {
-                document.getElementById('msgCount').textContent = this.stats.messages;
-                document.getElementById('toolCount').textContent = this.stats.tools;
-                document.getElementById('asrCount').textContent = this.stats.asr;
-                document.getElementById('ttsCount').textContent = this.stats.tts;
-            }
-            
-            clearMessages() {
-                this.messagesPanel.innerHTML = '';
-                this.stats = { messages: 0, tools: 0, asr: 0, tts: 0 };
-                this.updateStats();
             }
         }
-        
-        const client = new ListenAIClient();
+
+        function stopAllAudio() {
+            for (const source of activeSources) {
+                try { source.stop(); } catch (e) {}
+            }
+            activeSources = [];
+        }
+
+        function parseTTSFrame(buffer) {
+            try {
+                const view = new DataView(buffer);
+                if (buffer.byteLength < 8) return null;
+
+                const magic = view.getUint16(0, false);
+                if (magic !== 0xAA55) return null;
+
+                const msgType = view.getUint8(2);
+                const metadataLength = view.getUint32(4, false);
+
+                if (buffer.byteLength < 8 + metadataLength + 4) return null;
+
+                const metadataBytes = new Uint8Array(buffer, 8, metadataLength);
+                const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
+
+                const payloadLengthOffset = 8 + metadataLength;
+                const payloadLength = view.getUint32(payloadLengthOffset, false);
+                const audioDataOffset = payloadLengthOffset + 4;
+
+                if (payloadLength === 0) {
+                    return { metadata: metadata, audio: null, sampleRate: metadata.sample_rate || 16000 };
+                }
+
+                const audioDataBytes = new Uint8Array(buffer, audioDataOffset, payloadLength);
+                const audioData = new Int16Array(audioDataBytes.length / 2);
+                for (let i = 0; i < audioData.length; i++) {
+                    const lowByte = audioDataBytes[i * 2];
+                    const highByte = audioDataBytes[i * 2 + 1];
+                    audioData[i] = lowByte | (highByte << 8);
+                }
+
+                return { metadata: metadata, audio: audioData, sampleRate: metadata.sample_rate || 16000 };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function sendToTTS(text) {
+            if (!ttsConnected || !ttsWs) return;
+
+            const voiceId = document.getElementById('voiceSelect').value || '全部-湾湾小何';
+            const request = {
+                type: 'tts_request',
+                request_id: crypto.randomUUID(),
+                params: {
+                    text: text,
+                    mode: 'streaming',
+                    voice_id: voiceId
+                }
+            };
+
+            ttsWs.send(JSON.stringify(request));
+            addMessage('tts', `[TTS] Request sent: ${text.substring(0, 30)}...`);
+        }
+
+        // ========== Recording ==========
+        async function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                await startRecording();
+            }
+        }
+
+        async function startRecording() {
+            if (!asrConnected) {
+                addMessage('error', 'ASR not connected - cannot record');
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 16000
+                    }
+                });
+
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+
+                analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                analyser.fftSize = 256;
+
+                const bufferSize = 4096;
+                scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+                source.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+
+                scriptProcessor.onaudioprocess = (e) => {
+                    if (isRecording && asrWs && asrWs.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const pcmData = float32ToInt16(inputData);
+                        asrWs.send(pcmData);
+                    }
+                };
+
+                mediaStream = stream;
+                isRecording = true;
+                document.getElementById('recordBtn').classList.add('recording');
+                document.getElementById('recordingStatus').textContent = 'Recording... Click to stop';
+
+            } catch (error) {
+                addMessage('error', `Microphone access denied: ${error.message}`);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+            }
+            isRecording = false;
+            document.getElementById('recordBtn').classList.remove('recording');
+            document.getElementById('recordingStatus').textContent = 'Click to start recording';
+        }
+
+        function float32ToInt16(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            for (let i = 0; i < float32Array.length; i++) {
+                let s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+
+        // ========== Chat ==========
+        function sendChat() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            if (!llmConnected) {
+                addMessage('error', 'LLM Gateway not connected');
+                return;
+            }
+
+            addMessage('system', `[User] ${text}`);
+
+            const request = {
+                type: 'text_input',
+                text: text,
+                session_id: sessionId
+            };
+
+            llmWs.send(JSON.stringify(request));
+            input.value = '';
+        }
+
+        // ========== LED Control ==========
+        function updateLED() {
+            const bulb = document.getElementById('ledBulb');
+            const statusText = document.getElementById('ledStatusText');
+            const statusValue = document.getElementById('ledStatusValue');
+            const colorData = ledState.colors[ledState.color];
+
+            if (ledState.power) {
+                bulb.classList.remove('led-bulb-off');
+                bulb.classList.add('bulb-on');
+
+                const brightness = ledState.brightness / 100;
+                bulb.style.setProperty('--bulb-color', colorData.rgb);
+                bulb.style.setProperty('--bulb-glow', colorData.glow);
+                bulb.style.filter = `brightness(${0.3 + brightness * 0.7})`;
+
+                statusText.textContent = 'ON';
+                statusValue.textContent = `${ledState.brightness}% | ${ledState.color}`;
+                statusValue.style.color = colorData.rgb;
+            } else {
+                bulb.classList.add('led-bulb-off');
+                bulb.classList.remove('bulb-on');
+                bulb.style.filter = 'brightness(0.3)';
+
+                statusText.textContent = 'OFF';
+                statusValue.textContent = 'Power: Off';
+                statusValue.style.color = '#888';
+            }
+
+            // Update state display
+            document.getElementById('statePower').textContent = ledState.power;
+            document.getElementById('statePower').style.color = ledState.power ? '#66bb6a' : '#ef5350';
+            document.getElementById('stateBrightness').textContent = ledState.brightness;
+            document.getElementById('stateColor').textContent = ledState.color;
+            document.getElementById('stateRgb').textContent = colorData.rgb;
+
+            // Update controls
+            document.getElementById('brightnessSlider').value = ledState.brightness;
+            document.getElementById('brightnessValue').textContent = ledState.brightness;
+            document.getElementById('ledPower').checked = ledState.power;
+
+            // Update color presets
+            document.querySelectorAll('.color-preset').forEach(el => {
+                el.classList.toggle('active', el.dataset.color === ledState.color);
+            });
+        }
+
+        // ========== Utilities ==========
+        function addMessage(type, text) {
+            const panel = document.getElementById('messagesPanel');
+            const div = document.createElement('div');
+            div.className = `message message-${type}`;
+
+            const time = document.createElement('div');
+            time.className = 'message-time';
+            time.textContent = new Date().toLocaleTimeString();
+
+            const content = document.createElement('div');
+            content.textContent = text;
+
+            div.appendChild(time);
+            div.appendChild(content);
+            panel.appendChild(div);
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        function updateStats() {
+            document.getElementById('msgCount').textContent = stats.messages;
+            document.getElementById('toolCount').textContent = stats.tools;
+            document.getElementById('asrCount').textContent = stats.asr;
+            document.getElementById('ttsCount').textContent = stats.tts;
+        }
+
+        function updateToolsList(tools) {
+            const list = document.getElementById('toolsList');
+            list.innerHTML = '';
+
+            tools.forEach(tool => {
+                const div = document.createElement('div');
+                div.className = 'tool-item';
+
+                const icons = {
+                    'led_power': '⚡',
+                    'led_set_brightness': '💡',
+                    'led_set_color': '🎨',
+                    'led_get_state': '📊',
+                    'led_toggle': '🔘'
+                };
+
+                const toolDef = clientTools.find(t => t.name === tool.name);
+
+                div.innerHTML = `
+                    <div class="tool-icon">${icons[tool.name] || '🔧'}</div>
+                    <div class="tool-info">
+                        <div class="tool-name">${tool.name}</div>
+                        <div class="tool-desc">${toolDef ? toolDef.description : ''}</div>
+                    </div>
+                    ${tool.status === 'registered' ? '<span style="color:#66bb6a;font-size:14px;">✓</span>' : '<span style="color:#ef5350;font-size:14px;">✗</span>'}
+                `;
+
+                list.appendChild(div);
+            });
+        }
+
+        function updateFlowIndicator() {
+            const indicator = document.getElementById('flowIndicator');
+            const btn = document.getElementById('connectAllBtn');
+            const allConnected = asrConnected && llmConnected && ttsConnected;
+
+            if (allConnected) {
+                indicator.textContent = '✅ All services ready - Voice control active!';
+                indicator.style.background = 'rgba(102, 187, 106, 0.2)';
+                btn.textContent = '❌ Disconnect All';
+                btn.style.background = 'linear-gradient(135deg, #ef5350 0%, #ff8a80 100%)';
+            } else if (llmConnected) {
+                const missing = [];
+                if (!asrConnected) missing.push('ASR');
+                if (!ttsConnected) missing.push('TTS');
+                indicator.textContent = `⚠ Missing: ${missing.join(', ')}`;
+                indicator.style.background = 'rgba(255, 167, 38, 0.2)';
+                btn.textContent = '⚡ Connect Missing';
+                btn.style.background = 'linear-gradient(135deg, #66bb6a 0%, #4fc3f7 100%)';
+            } else {
+                indicator.textContent = '⚡ Connect services to start';
+                indicator.style.background = 'rgba(79, 195, 247, 0.1)';
+                btn.textContent = '⚡ Connect All';
+                btn.style.background = 'linear-gradient(135deg, #66bb6a 0%, #4fc3f7 100%)';
+            }
+        }
+
+        function clearMessages() {
+            document.getElementById('messagesPanel').innerHTML = '';
+            stats = { messages: 0, tools: 0, asr: 0, tts: 0, registered: 0, callbacks: 0 };
+            updateStats();
+        }
+
+        // Initialize
+        init();
     </script>
 </body>
 </html>
