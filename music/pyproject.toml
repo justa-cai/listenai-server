@@ -1,0 +1,14 @@
+[project]
+name = "music-image-generator"
+version = "0.1.0"
+description = "Generate images from song lyrics using LLM and Image Generation"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.0.0",
+    "Pillow>=10.0.0",
+    "torch>=2.0.0",
+    "diffusers>=0.30.0",
+    "transformers>=4.30.0",
+    "requests>=2.31.0",
+    "tqdm>=4.66.0",
+]
