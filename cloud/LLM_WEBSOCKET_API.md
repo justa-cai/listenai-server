@@ -248,9 +248,27 @@ Client                              Server
 |------|------|------|------|
 | `type` | string | 是 | 固定值 `"register_tools"` |
 | `tools` | array | 是 | 工具定义列表 |
-| `tools[].name` | string | 是 | 工具名称（唯一标识） |
+| `tools[].name` | string | 是 | 工具名称（唯一标识），见下方命名规则 |
 | `tools[].description` | string | 是 | 工具描述，LLM 会参考此描述 |
 | `tools[].parameters` | object | 是 | JSON Schema 格式的参数定义 |
+
+#### 工具命名规则
+
+工具名称必须符合以下规则：
+
+- **格式**：以字母或下划线开头，可包含字母、数字、下划线、点号（`.`）
+- **长度**：1-64 个字符
+- **限制**：不能以点号结尾，不能包含连续的点号
+- **示例**：
+  - ✅ `get_battery`
+  - ✅ `device.light.turn_on`
+  - ✅ `weather.get_current`
+  - ✅ `sensor.temperature.read`
+  - ❌ `1tool` (不能以数字开头)
+  - ❌ `tool.` (不能以点号结尾)
+  - ❌ `tool..name` (不能包含连续点号)
+
+使用点号分隔可以实现工具的命名空间分组，便于组织和管理大量工具。
 
 #### 工具参数格式 (JSON Schema)
 
@@ -341,10 +359,36 @@ Client                              Server
 }
 ```
 
+#### 等待工具结果状态
+
+当 LLM 请求客户端工具时，服务端会发送此状态表示正在等待客户端返回工具执行结果：
+
+```json
+{
+    "type": "status",
+    "status": "waiting_for_tools",
+    "data": {
+        "pending_tools": 2
+    },
+    "timestamp": "2025-02-21T10:30:01.000Z"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pending_tools` | int | 等待中的客户端工具数量 |
+
+客户端收到此状态后应：
+1. 准备接收后续的 `tool_callback` 消息
+2. 执行对应的工具函数
+3. 通过 `tool_result` 消息返回结果
+4. 服务端收到所有工具结果后会继续生成最终 LLM 响应
+
 | 状态值 | 说明 |
 |--------|------|
 | `connected` | 连接已建立 |
 | `processing` | 正在处理请求 |
+| `waiting_for_tools` | 等待客户端工具返回结果 |
 | `idle` | 空闲状态 |
 
 ### 5.2 LLM 响应消息

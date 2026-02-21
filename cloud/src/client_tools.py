@@ -140,10 +140,15 @@ class ClientToolManager:
         if not isinstance(name, str):
             return "Tool name must be a string"
 
-        # 检查名称格式（只允许字母、数字、下划线）
+        # 检查名称格式（允许字母、数字、下划线、点号）
+        # 支持带命名空间的工具名称，如 "weather.get_current" 或 "device.light.turn_on"
         import re
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
-            return "Tool name must be a valid identifier (letters, numbers, underscores, not starting with a number)"
+        # 规则：以字母或下划线开头，可包含字母、数字、下划线、点号
+        # 不能以点号结尾，不能有连续的点号
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', name):
+            return "Tool name must be a valid identifier (letters, numbers, underscores, dots, not starting with a number)"
+        if name.endswith('.') or '..' in name:
+            return "Tool name cannot end with a dot or contain consecutive dots"
 
         if not description:
             return "Tool description is required"
