@@ -14,6 +14,7 @@ from .message_handler import MessageHandler
 from .queue import TaskQueue
 from .config import ServerConfig, ModelConfig
 from .metrics import metrics_manager
+from .model_worker import ModelWorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,18 @@ class VoxCPMWebSocketServer:
         self.model_config = model_config
         self.state = ServerState()
         self.session_manager = SessionManager()
+        self._worker_pool = None  # Will be created in serve()
+
+        # Create queue without worker pool initially (for main.py compatibility)
         self.queue = TaskQueue(max_concurrent=server_config.max_concurrent_requests)
-        self.message_handler = MessageHandler(model_config, self.queue, server_config=server_config)
+
+        # Create message handler (main.py needs this before serve())
+        self.message_handler = MessageHandler(
+            model_config,
+            self.queue,
+            server_config=server_config
+        )
+
         self._running = False
         self._server = None
         self._metrics_task = None
@@ -62,6 +73,21 @@ class VoxCPMWebSocketServer:
         port = port or self.server_config.port
 
         self._running = True
+
+        # Get current event loop and create worker pool
+        loop = asyncio.get_running_loop()
+        self._worker_pool = ModelWorkerPool(
+            num_workers=self.server_config.num_model_workers,
+            model_config=self.model_config,
+            loop=loop
+        )
+
+        # Update queue with worker pool
+        self.queue._worker_pool = self._worker_pool
+
+        # Start model worker pool
+        await self._worker_pool.start()
+        logger.info(f"Model worker pool started with {self._worker_pool.total_count} workers")
 
         # Start task queue workers
         await self.queue.start(num_workers=self.server_config.max_concurrent_requests)
@@ -98,9 +124,17 @@ class VoxCPMWebSocketServer:
 
         try:
             # Stop task queue with timeout
-            await asyncio.wait_for(self.queue.stop(), timeout=0.8)
+            if self.queue:
+                await asyncio.wait_for(self.queue.stop(), timeout=2.0)
         except asyncio.TimeoutError:
             logger.warning("Queue stop timed out")
+
+        # Stop worker pool
+        try:
+            if self._worker_pool:
+                await asyncio.wait_for(self._worker_pool.stop(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("Worker pool stop timed out")
 
         # Stop metrics task
         if self._metrics_task:
@@ -212,9 +246,13 @@ class VoxCPMWebSocketServer:
 
     def get_status(self) -> dict:
         """Get server status."""
-        return {
+        status = {
             "running": self._running,
             "connections": len(self.state.connections),
             "sessions": self.session_manager.session_count,
-            "queue": self.queue.get_status(),
         }
+        if self.queue:
+            status["queue"] = self.queue.get_status()
+        if self._worker_pool:
+            status["worker_pool"] = self._worker_pool.get_status()
+        return status

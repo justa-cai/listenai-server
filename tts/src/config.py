@@ -16,6 +16,7 @@ class ServerConfig:
     max_connections: int = 100
     max_concurrent_requests: int = 10
     max_queue_size: int = 50
+    num_model_workers: int = 3  # Number of model worker threads
     request_timeout: int = 600  # Increased to 10 minutes
 
     # Audio settings
@@ -35,7 +36,7 @@ class ServerConfig:
 
     # Logging
     log_level: str = "INFO"
-    log_format: str = "json"  # or "text"
+    log_format: str = "text"  # or "json"
 
     # Debug
     debug_audio: bool = False  # Enable debug audio saving to ./tmp/debug_audio/
@@ -89,6 +90,7 @@ class Config:
             max_connections=int(os.getenv("TTS_MAX_CONNECTIONS", "100")),
             max_concurrent_requests=int(os.getenv("TTS_MAX_CONCURRENT", "10")),
             max_queue_size=int(os.getenv("TTS_MAX_QUEUE_SIZE", "50")),
+            num_model_workers=int(os.getenv("TTS_NUM_MODEL_WORKERS", "3")),
             request_timeout=int(os.getenv("TTS_REQUEST_TIMEOUT", "600")),
             chunk_size=int(os.getenv("TTS_CHUNK_SIZE", "4096")),
             sample_rate=int(os.getenv("TTS_SAMPLE_RATE", "16000")),
@@ -98,7 +100,7 @@ class Config:
             metrics_enabled=os.getenv("TTS_METRICS_ENABLED", "false").lower() == "true",
             metrics_port=int(os.getenv("TTS_METRICS_PORT", "9090")),
             log_level=os.getenv("TTS_LOG_LEVEL", "INFO"),
-            log_format=os.getenv("TTS_LOG_FORMAT", "json"),
+            log_format=os.getenv("TTS_LOG_FORMAT", "text"),
             debug_audio=os.getenv("TTS_DEBUG_AUDIO", "false").lower() == "true",
         )
 

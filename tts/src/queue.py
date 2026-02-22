@@ -1,34 +1,37 @@
-"""Task queue for managing concurrent TTS requests."""
+"""Task queue for managing concurrent TTS requests with worker pool."""
 
 import asyncio
-from typing import Optional
+import logging
+from typing import Optional, TYPE_CHECKING
+
 from .tasks import TTSRequestTask
+
+if TYPE_CHECKING:
+    from .model_worker import ModelWorkerPool
+
+logger = logging.getLogger(__name__)
 
 
 class TaskQueue:
     """
-    Queue for managing TTS requests with concurrency control.
+    Queue for managing TTS requests with concurrency control using worker pool.
 
-    Limits the number of concurrent TTS generation tasks and
-    queues additional requests.
+    Distributes TTS requests to available model workers for parallel processing.
     """
 
-    # Global inference lock to ensure only one model inference at a time
-    _inference_lock = asyncio.Lock()
-
-    def __init__(self, max_concurrent: int = 10, use_inference_lock: bool = True):
+    def __init__(self, max_concurrent: int = 10, worker_pool: Optional["ModelWorkerPool"] = None):
         """
         Initialize the task queue.
 
         Args:
-            max_concurrent: Maximum number of concurrent tasks
-            use_inference_lock: If True, use global inference lock to prevent concurrent model inference
+            max_concurrent: Maximum number of concurrent tasks (should match worker pool size)
+            worker_pool: Optional model worker pool for parallel inference
         """
         self.max_concurrent = max_concurrent
-        self.use_inference_lock = use_inference_lock
+        self._worker_pool = worker_pool
         self._queue: asyncio.Queue[TTSRequestTask] = asyncio.Queue()
         self._running_tasks: set[asyncio.Task] = set()
-        self._running_tts_tasks: dict[asyncio.Task, TTSRequestTask] = {}  # Map worker_task -> TTSRequestTask
+        self._running_tts_tasks: dict[asyncio.Task, TTSRequestTask] = {}
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._workers: list[asyncio.Task] = []
 
@@ -58,29 +61,24 @@ class TaskQueue:
         Start worker coroutines.
 
         Args:
-            num_workers: Number of worker coroutines to start
+            num_workers: Number of worker coroutines to start (dispatcher tasks)
         """
-        for _ in range(num_workers):
-            worker = asyncio.create_task(self._worker())
+        for i in range(num_workers):
+            worker = asyncio.create_task(self._worker(i))
             self._workers.append(worker)
+        logger.info(f"Started {num_workers} dispatcher workers")
 
     async def stop(self) -> None:
         """Stop all worker coroutines and running tasks."""
-        import logging
-        logger = logging.getLogger(__name__)
-
-        # First, cancel all running tasks
         running_count = len(self._running_tasks)
         if running_count > 0:
             logger.info(f"Cancelling {running_count} running task(s)...")
             for task in list(self._running_tasks):
                 task.cancel()
 
-        # Then cancel all workers
         for worker in self._workers:
             worker.cancel()
 
-        # Wait for workers to finish with timeout
         try:
             await asyncio.wait_for(
                 asyncio.gather(*self._workers, return_exceptions=True),
@@ -93,16 +91,17 @@ class TaskQueue:
         self._running_tasks.clear()
         self._running_tts_tasks.clear()
 
-    async def _worker(self) -> None:
-        """Worker coroutine that processes tasks from the queue."""
+    async def _worker(self, worker_id: int) -> None:
+        """Dispatcher coroutine that processes tasks from the queue."""
+        logger.debug(f"Dispatcher worker {worker_id} started")
         while True:
             try:
                 # Get task from queue
                 task = await self._queue.get()
 
-                # Set inference lock if enabled
-                if self.use_inference_lock:
-                    task._inference_lock = self._inference_lock
+                # Assign worker pool to task if available
+                if self._worker_pool:
+                    task._worker_pool = self._worker_pool
 
                 # Create worker task
                 async def run_task():
@@ -112,11 +111,9 @@ class TaskQueue:
                         except asyncio.CancelledError:
                             task.session.cancelled = True
                         except Exception:
-                            # Error is handled within the task
                             pass
                         finally:
                             self._queue.task_done()
-                            # Clean up mapping
                             self._running_tts_tasks.pop(asyncio.current_task(), None)
 
                 worker_task = asyncio.create_task(run_task())
@@ -126,6 +123,7 @@ class TaskQueue:
                 worker_task.add_done_callback(lambda t: self._running_tts_tasks.pop(t, None))
 
             except asyncio.CancelledError:
+                logger.debug(f"Dispatcher worker {worker_id} cancelled")
                 break
 
     @property
@@ -158,15 +156,11 @@ class TaskQueue:
         Returns:
             True if task was found and cancelled
         """
-        # Cancel running tasks
         for task in list(self._running_tasks):
-            if hasattr(task, 'request_id') and task.request_id == request_id:
+            tts_task = self._running_tts_tasks.get(task)
+            if tts_task and tts_task.session.request_id == request_id:
                 task.cancel()
                 return True
-
-        # Cancel queued tasks (need to check session)
-        # Note: This is a simplified implementation
-        # A full implementation would require tracking queued tasks by request_id
         return False
 
     async def cancel_all_running(self) -> list[str]:
@@ -178,7 +172,6 @@ class TaskQueue:
         """
         cancelled_ids = []
         for worker_task, tts_task in list(self._running_tts_tasks.items()):
-            # Set the cancelled flag on the TTS task instead of cancelling the worker
             tts_task.cancel()
             tts_task.session.cancelled = True
             tts_task.session.state = "cancelled"
@@ -209,9 +202,12 @@ class TaskQueue:
         Returns:
             Dictionary with queue status
         """
-        return {
+        status = {
             "pending": self.pending_count,
             "running": self.running_count,
             "available_slots": self.available_slots,
             "max_concurrent": self.max_concurrent,
         }
+        if self._worker_pool:
+            status["worker_pool"] = self._worker_pool.get_status()
+        return status

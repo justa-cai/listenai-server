@@ -54,6 +54,7 @@ async def main():
     logger.info(f"WebSocket server: ws://{config.server.host}:{config.server.port}/tts")
     logger.info(f"Model config: name={config.model.model_name}, device={config.model.device}")
     logger.info(f"Max concurrent requests: {config.server.max_concurrent_requests}")
+    logger.info(f"Model workers: {config.server.num_model_workers}")
     logger.info(f"Max connections: {config.server.max_connections}")
     logger.info(f"Debug audio: {config.server.debug_audio}")
 
@@ -112,12 +113,12 @@ async def shutdown(server: VoxCPMWebSocketServer, web_server: HTTPWebServer = No
     """Gracefully shutdown the servers."""
     logger.info("Shutting down...")
     try:
-        await asyncio.wait_for(server.stop(), timeout=1.0)
+        await asyncio.wait_for(server.stop(), timeout=5.0)
     except asyncio.TimeoutError:
         logger.warning("Server stop timed out")
     if web_server:
         try:
-            await asyncio.wait_for(web_server.stop(), timeout=1.0)
+            await asyncio.wait_for(web_server.stop(), timeout=2.0)
         except asyncio.TimeoutError:
             logger.warning("Web server stop timed out")
 

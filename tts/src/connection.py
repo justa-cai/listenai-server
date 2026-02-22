@@ -3,11 +3,14 @@
 import uuid
 import json
 import time
+import logging
 import websockets.server
 from datetime import datetime
 from typing import Optional
 
 from .errors import VoxCPMError
+
+logger = logging.getLogger(__name__)
 
 
 class Connection:
@@ -96,7 +99,10 @@ class Connection:
         # Audio payload
         frame.extend(audio_data)
 
-        await self.send(bytes(frame))
+        frame_bytes = bytes(frame)
+        logger.info(f"Sending binary frame: type={msg_type:#04x}, total_length={len(frame_bytes)}, metadata_len={metadata_length}, audio_len={len(audio_data)}")
+
+        await self.send(frame_bytes)
 
     async def send_progress(
         self,
