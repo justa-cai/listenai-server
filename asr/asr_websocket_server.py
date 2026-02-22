@@ -996,6 +996,8 @@ class ASRWebSocketService:
                             speech_buffer.start()
                             speech_buffer.add(chunk_float32)
                             logger.info(f"[Client {client_id}] Speech segment started")
+                            # Send VAD event to client
+                            await self.send_vad_event(websocket, speech_started=True)
                         elif was_speeching and is_speeching:
                             # Still in speech - continue adding
                             speech_buffer.add(chunk_float32)
@@ -1006,6 +1008,9 @@ class ASRWebSocketService:
 
                             duration = speech_buffer.get_duration()
                             samples = speech_buffer.total_samples
+
+                            # Send VAD event to client
+                            await self.send_vad_event(websocket, speech_started=False, duration=duration, samples=samples)
 
                             # Calculate energy for filtering
                             energy = speech_buffer.get_rms_energy()
@@ -1146,6 +1151,26 @@ class ASRWebSocketService:
             result["segment_id"] = segment_id
 
         await websocket.send(json.dumps(result, ensure_ascii=False))
+
+    async def send_vad_event(
+        self,
+        websocket,
+        speech_started: bool,
+        duration: float = None,
+        samples: int = None,
+    ):
+        """Send VAD event (speech start/end) to client."""
+        event = {
+            "type": "vad",
+            "event": "speech_start" if speech_started else "speech_end",
+            "timestamp": int(time.time() * 1000),
+        }
+        if duration is not None:
+            event["duration"] = round(duration, 3)
+        if samples is not None:
+            event["samples"] = samples
+
+        await websocket.send(json.dumps(event, ensure_ascii=False))
 
     async def send_error(self, websocket, message: str, code: int = 1):
         """Send error message to client."""
