@@ -16,7 +16,7 @@ class ServerConfig:
     max_connections: int = 100
     session_timeout: int = 3600
     log_level: str = "INFO"
-    log_format: str = "json"
+    log_format: str = "console"  # Options: json, console, text
 
 
 @dataclass
@@ -113,37 +113,83 @@ class Config:
         return cls(server=server, llm=llm, mcp=mcp, client_tools=client_tools)
 
 
-def setup_logging(config: Config) -> logging.Logger:
-    log_level = getattr(logging, config.server.log_level.upper())
+class ColoredFormatter(logging.Formatter):
+    """带颜色的高亮日志格式化器"""
 
-    if config.server.log_format == "json":
+    # ANSI 颜色码
+    COLORS = {
+        'DEBUG': '\033[36m',      # 青色
+        'INFO': '\033[32m',       # 绿色
+        'WARNING': '\033[33m',    # 黄色
+        'ERROR': '\033[31m',      # 红色
+        'CRITICAL': '\033[35m',   # 紫色
+    }
+    BOLD = '\033[1m'
+    RESET = '\033[0m'
+    GRAY = '\033[90m'
+    BLUE = '\033[34m'
+
+    def format(self, record):
+        # 获取颜色
+        level_color = self.COLORS.get(record.levelname, self.RESET)
+
+        # 格式化各部分
+        timestamp = self.formatTime(record, '%Y-%m-%d %H:%M:%S')
+        level = f"{level_color}{self.BOLD}{record.levelname:<8}{self.RESET}"
+        logger_name = f"{self.BLUE}{record.name}{self.RESET}"
+        location = f"{self.GRAY}{record.module}:{record.funcName}:{record.lineno}{self.RESET}"
+        message = record.getMessage()
+
+        # 组合格式化输出
+        formatted = f"{timestamp} | {level} | {logger_name} | {location} | {message}"
+
+        # 处理异常信息
+        if record.exc_info:
+            formatted += '\n' + self.formatException(record.exc_info)
+
+        return formatted
+
+
+class JsonFormatter(logging.Formatter):
+    """JSON 格式日志格式化器"""
+
+    def format(self, record):
         import json
         from datetime import datetime
 
-        class JsonFormatter(logging.Formatter):
-            def format(self, record):
-                log_entry = {
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "level": record.levelname,
-                    "logger": record.name,
-                    "message": record.getMessage(),
-                    "module": record.module,
-                    "function": record.funcName,
-                    "line": record.lineno,
-                }
-                if record.exc_info:
-                    log_entry["exception"] = self.formatException(record.exc_info)
-                return json.dumps(log_entry)
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry)
 
-        root_logger = logging.getLogger()
-        root_logger.setLevel(log_level)
-        handler = logging.StreamHandler()
+
+def setup_logging(config: Config) -> logging.Logger:
+    log_level = getattr(logging, config.server.log_level.upper())
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    handler = logging.StreamHandler()
+
+    # 根据配置选择格式化器
+    log_format = config.server.log_format.lower()
+
+    if log_format == "json":
         handler.setFormatter(JsonFormatter())
-        root_logger.handlers = [handler]
-    else:
-        logging.basicConfig(
-            level=log_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    elif log_format == "console":
+        handler.setFormatter(ColoredFormatter())
+    else:  # text
+        handler.setFormatter(
+            logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)s | %(module)s:%(funcName)s:%(lineno)d | %(message)s')
         )
+
+    root_logger.handlers = [handler]
 
     return logging.getLogger("cloud")
