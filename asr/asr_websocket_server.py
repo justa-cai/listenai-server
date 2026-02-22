@@ -28,9 +28,8 @@ from model import FunASRNano
 # VAD Configuration
 VAD_HOP_SIZE = 256
 VAD_THRESHOLD = 0.5
-VAD_SILENCE_FRAMES = (
-    5  # Need 10 consecutive silence frames to exit speech state (hysteresis)
-)
+VAD_SPEECH_FRAMES = 3  # Need N consecutive speech frames to enter speech state (prevents false triggers)
+VAD_SILENCE_FRAMES = 5  # Need N consecutive silence frames to exit speech state (hysteresis)
 
 # ASR Configuration
 ASR_MODEL_DIR = "FunAudioLLM/Fun-ASR-Nano-2512"
@@ -44,6 +43,10 @@ ASR_KEEP_TEMP_FILES = True  # Keep temp wav files for debugging (set to False to
 ENERGY_THRESHOLD = 0.01  # Energy threshold for filtering low-energy speech segments (noise)
 ASR_MIN_TEXT_LENGTH = 2  # Minimum text length to send result (filters empty/invalid ASR results)
 VAD_SPEECH_RATIO_THRESHOLD = 0.3  # Minimum speech ratio (speech frames / total frames) for valid audio
+
+# Noise Suppression Configuration
+NS_ENABLED = False # Enable/disable noise suppression (RNNoise)
+NS_SAMPLE_RATE = 16000  # RNNoise sample rate (must match ASR sample rate)
 
 # WebSocket Configuration
 WS_HOST = "0.0.0.0"
@@ -278,6 +281,259 @@ class SpeechBuffer:
 
 
 # ============================================================================
+# Noise Suppression (NS) Processor - RNNoise
+# ============================================================================
+
+try:
+    from pyrnnoise import RNNoise
+    RNNOISE_AVAILABLE = True
+except ImportError:
+    RNNOISE_AVAILABLE = False
+    logger.warning(
+        "pyrnnoise not installed. Noise suppression disabled. "
+        "Install with: pip install pyrnnoise"
+    )
+
+
+class NSProcessor:
+    """
+    Noise Suppression processor using RNNoise (Recurrent Neural Network Noise Reduction).
+
+    RNNoise is a lightweight deep learning based noise suppression algorithm
+    developed by Mozilla/Xiph. It uses a GRU-based neural network to predict
+    gain masks for each frequency band, effectively suppressing background noise
+    while preserving speech quality.
+
+    Features:
+    - Very low latency (<10ms)
+    - Lightweight model (~200KB)
+    - Real-time processing capable
+    - Effective against various noise types (fan, keyboard, traffic, etc.)
+
+    Note: RNNoise native sample rate is 48kHz with fixed frame size of 480 samples.
+    This class handles buffering and resampling to match VAD frame sizes.
+    """
+
+    # RNNoise native configuration
+    RNNOISE_SAMPLE_RATE = 48000  # RNNoise native sample rate
+    RNNOISE_FRAME_SIZE = 480  # 10ms at 48kHz
+
+    def __init__(self, sample_rate: int = NS_SAMPLE_RATE, enabled: bool = NS_ENABLED):
+        """
+        Initialize NS Processor.
+
+        Args:
+            sample_rate: Sample rate for processing (default: 16000 Hz)
+            enabled: Whether noise suppression is enabled
+        """
+        self.enabled = enabled and RNNOISE_AVAILABLE
+        self.sample_rate = sample_rate
+        self.resample_needed = sample_rate != self.RNNOISE_SAMPLE_RATE
+
+        # Buffer for accumulating audio at 48kHz
+        self._buffer_48k: list[np.ndarray] = []
+        self._buffer_size_48k = 0
+
+        # Buffer for output at original sample rate
+        self._output_buffer: list[np.ndarray] = []
+        self._output_buffer_size = 0
+
+        if self.enabled:
+            try:
+                # Initialize RNNoise at its native 48kHz
+                self.denoiser = RNNoise(sample_rate=self.RNNOISE_SAMPLE_RATE)
+                self.frame_size = int(0.01 * sample_rate)  # 10ms frame size at input sample rate
+                logger.info(
+                    f"RNNoise initialized: native_rate={self.RNNOISE_SAMPLE_RATE}Hz, "
+                    f"input_rate={sample_rate}Hz, rnnoise_frame={self.RNNOISE_FRAME_SIZE}samples, "
+                    f"resample={'enabled' if self.resample_needed else 'not needed'}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize RNNoise: {e}")
+                self.enabled = False
+        else:
+            if not RNNOISE_AVAILABLE:
+                logger.info("Noise suppression disabled (pyrnnoise not available)")
+            else:
+                logger.info("Noise suppression disabled (NS_ENABLED=False)")
+
+    def _resample_to_rnnoise(self, audio: np.ndarray) -> np.ndarray:
+        """Resample audio from input sample rate to RNNoise's 48kHz."""
+        if not self.resample_needed:
+            return audio
+
+        # Calculate target length
+        ratio = self.RNNOISE_SAMPLE_RATE / self.sample_rate
+        target_length = int(len(audio) * ratio)
+
+        # Simple linear interpolation resampling
+        # For better quality, consider using scipy.signal.resample or librosa.resample
+        indices = np.linspace(0, len(audio) - 1, target_length)
+        return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+
+    def _resample_from_rnnoise(self, audio: np.ndarray, target_length: int) -> np.ndarray:
+        """Resample audio from RNNoise's 48kHz back to input sample rate."""
+        if not self.resample_needed:
+            return audio[:target_length]
+
+        # Calculate source indices
+        ratio = self.sample_rate / self.RNNOISE_SAMPLE_RATE
+        indices = np.linspace(0, len(audio) - 1, target_length)
+
+        # Simple linear interpolation resampling
+        return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+
+    def _process_rnnoise_frames(self) -> None:
+        """Process all complete RNNoise frames in the buffer."""
+        while self._buffer_size_48k >= self.RNNOISE_FRAME_SIZE:
+            # Extract one RNNoise frame (480 samples at 48kHz)
+            frame_parts = []
+            samples_needed = self.RNNOISE_FRAME_SIZE
+            remaining_samples = samples_needed
+
+            # Collect samples from buffer
+            while remaining_samples > 0 and self._buffer_48k:
+                chunk = self._buffer_48k[0]
+                if len(chunk) <= remaining_samples:
+                    # Take the whole chunk
+                    frame_parts.append(chunk)
+                    remaining_samples -= len(chunk)
+                    self._buffer_48k.pop(0)
+                else:
+                    # Take part of the chunk
+                    frame_parts.append(chunk[:remaining_samples])
+                    self._buffer_48k[0] = chunk[remaining_samples:]
+                    remaining_samples = 0
+
+            # Concatenate frame parts
+            frame_48k = np.concatenate(frame_parts) if len(frame_parts) > 1 else frame_parts[0]
+            self._buffer_size_48k -= self.RNNOISE_FRAME_SIZE
+
+            # Process with RNNoise
+            try:
+                # Convert to int16 and reshape for denoise_chunk [1, 480]
+                frame_int16 = (frame_48k * 32768).astype(np.int16)
+                frame_chunk = frame_int16.reshape(1, -1)
+
+                results = list(self.denoiser.denoise_chunk(frame_chunk, partial=False))
+
+                if results and results[0] and len(results[0]) >= 2:
+                    _, denoised_int16 = results[0]
+                    if denoised_int16 is not None:
+                        if denoised_int16.ndim == 2:
+                            denoised_int16 = denoised_int16[0]
+                        denoised_float32 = denoised_int16.astype(np.float32) / 32768.0
+                        self._output_buffer.append(denoised_float32)
+                        self._output_buffer_size += len(denoised_float32)
+            except Exception as e:
+                logger.error(f"RNNoise frame processing error: {e}")
+
+    def _get_output(self, num_samples: int) -> np.ndarray:
+        """Get specified number of samples from output buffer."""
+        if not self._output_buffer:
+            return None
+
+        # Collect samples from output buffer
+        output_parts = []
+        samples_collected = 0
+        remaining = num_samples
+
+        while remaining > 0 and self._output_buffer:
+            chunk = self._output_buffer[0]
+            if len(chunk) <= remaining:
+                output_parts.append(chunk)
+                samples_collected += len(chunk)
+                remaining -= len(chunk)
+                self._output_buffer.pop(0)
+                self._output_buffer_size -= len(chunk)
+            else:
+                output_parts.append(chunk[:remaining])
+                samples_collected += remaining
+                self._output_buffer[0] = chunk[remaining:]
+                self._output_buffer_size -= remaining
+                remaining = 0
+
+        if samples_collected < num_samples:
+            # Not enough output, pad with zeros
+            output = np.concatenate(output_parts) if output_parts else np.array([], dtype=np.float32)
+            if len(output) < num_samples:
+                output = np.pad(output, (0, num_samples - len(output)), mode='constant')
+            return output
+
+        return np.concatenate(output_parts) if len(output_parts) > 1 else output_parts[0]
+        """Resample audio from RNNoise's 48kHz back to input sample rate."""
+        if not self.resample_needed:
+            return audio[:target_length]
+
+        # Calculate source indices
+        ratio = self.sample_rate / self.RNNOISE_SAMPLE_RATE
+        indices = np.linspace(0, len(audio) - 1, target_length)
+
+        # Simple linear interpolation resampling
+        return np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+
+    def process_frame(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Process a single audio frame through RNNoise with buffering.
+
+        This method handles frame size mismatches between VAD (variable) and
+        RNNoise (fixed 480 samples @ 48kHz) using an internal buffer.
+
+        Args:
+            audio: Audio data as float32 numpy array (normalized to [-1, 1])
+
+        Returns:
+            Denoised audio as float32 numpy array (same length as input)
+        """
+        if not self.enabled:
+            return audio
+
+        try:
+            original_length = len(audio)
+
+            # Resample to RNNoise's native 48kHz if needed
+            audio_48k = self._resample_to_rnnoise(audio) if self.resample_needed else audio
+
+            # Add to buffer
+            self._buffer_48k.append(audio_48k)
+            self._buffer_size_48k += len(audio_48k)
+
+            # Process all complete RNNoise frames
+            self._process_rnnoise_frames()
+
+            # Get output (resampled back to original sample rate)
+            if self._output_buffer:
+                if self.resample_needed:
+                    # Calculate how many 48kHz samples we need for the output
+                    output_48k_length = int(original_length * self.RNNOISE_SAMPLE_RATE / self.sample_rate)
+                    output_48k = self._get_output(output_48k_length)
+                    if output_48k is not None:
+                        return self._resample_from_rnnoise(output_48k, original_length)
+                else:
+                    output = self._get_output(original_length)
+                    if output is not None:
+                        return output
+
+            # Not enough output yet, return original audio
+            return audio
+
+        except Exception as e:
+            logger.error(f"RNNoise processing error: {e}")
+            return audio  # Return original audio on error
+
+    def reset(self) -> None:
+        """Reset internal buffers."""
+        self._buffer_48k.clear()
+        self._buffer_size_48k = 0
+        self._output_buffer.clear()
+        self._output_buffer_size = 0
+
+    def is_enabled(self) -> bool:
+        """Check if noise suppression is enabled and available."""
+        return self.enabled
+
+
+# ============================================================================
 # VAD Processor
 # ============================================================================
 
@@ -292,30 +548,34 @@ from ten_vad import TenVad
 
 class VADProcessor:
     """
-    Voice Activity Detection using TenVad with hysteresis.
+    Voice Activity Detection using TenVad with dual hysteresis.
 
-    Hysteresis mechanism:
-    - Enter speech state immediately when any speech frame is detected
-    - Exit speech state only after N consecutive silence frames
+    Dual hysteresis mechanism:
+    - Enter speech state only after N consecutive speech frames (prevents false triggers)
+    - Exit speech state only after N consecutive silence frames (prevents early exit)
+
+    This prevents sudden noises (coughs, clicks) from triggering speech detection,
+    while also preventing brief pauses from ending speech segments prematurely.
     """
 
     def __init__(
         self,
         hop_size: int = VAD_HOP_SIZE,
         threshold: float = VAD_THRESHOLD,
+        speech_frames: int = VAD_SPEECH_FRAMES,
         silence_frames: int = VAD_SILENCE_FRAMES,
     ):
         self.hop_size = hop_size
         self.threshold = threshold
-        self.silence_frames = (
-            silence_frames  # Number of consecutive silence frames to exit speech
-        )
+        self.speech_frames = speech_frames  # Number of consecutive speech frames to enter speech
+        self.silence_frames = silence_frames  # Number of consecutive silence frames to exit speech
 
         # Initialize TenVad
         try:
             self.ten_vad = TenVad(hop_size=hop_size, threshold=threshold)
             logger.info(
-                f"TenVad initialized with hop_size={hop_size}, threshold={threshold}, silence_frames={silence_frames}"
+                f"TenVad initialized with hop_size={hop_size}, threshold={threshold}, "
+                f"speech_frames={speech_frames}, silence_frames={silence_frames}"
             )
         except Exception as e:
             logger.error(f"Failed to initialize TenVad: {e}")
@@ -323,7 +583,8 @@ class VADProcessor:
 
         # VAD state machine
         self.is_speeching = False  # Current state
-        self.consecutive_silence_count = 0  # Consecutive silence frame counter
+        self.consecutive_speech_count = 0  # Consecutive speech frame counter (for entering speech)
+        self.consecutive_silence_count = 0  # Consecutive silence frame counter (for exiting speech)
         self.frame_count = 0  # Total frames processed
 
     def process_frame(self, frame_audio: np.ndarray) -> Tuple[bool, Optional[float]]:
@@ -357,20 +618,30 @@ class VADProcessor:
         # speech_flag: 0 = non-speech, 1 = speech
         is_speech_frame = speech_flag == 1
 
-        # Hysteresis state machine
+        # Dual hysteresis state machine
         if is_speech_frame:
-            # Any speech frame: enter speech state immediately
+            # Speech frame detected
             if not self.is_speeching:
-                logger.info(
-                    f"Speech START at frame {self.frame_count}, prob: {probability:.3f}"
-                )
-            self.is_speeching = True
-            self.consecutive_silence_count = 0
+                # Not in speech state: increment speech counter
+                self.consecutive_speech_count += 1
+
+                # Check if we should enter speech state
+                if self.consecutive_speech_count >= self.speech_frames:
+                    self.is_speeching = True
+                    self.consecutive_speech_count = 0
+                    self.consecutive_silence_count = 0
+                    logger.info(
+                        f"Speech START at frame {self.frame_count} (after {self.speech_frames} consecutive speech frames), prob: {probability:.3f}"
+                    )
+            else:
+                # Already in speech state: continue, reset silence counter
+                self.consecutive_silence_count = 0
         else:
-            # Silence frame
+            # Silence frame detected
             if self.is_speeching:
                 # In speech state: increment silence counter
                 self.consecutive_silence_count += 1
+                self.consecutive_speech_count = 0  # Reset speech counter
 
                 # Check if we should exit speech state
                 if self.consecutive_silence_count >= self.silence_frames:
@@ -380,13 +651,15 @@ class VADProcessor:
                         f"Speech END at frame {self.frame_count} (after {self.silence_frames} consecutive silence frames)"
                     )
             else:
-                # Already in silence state: do nothing
-                pass
+                # Already in silence state: reset speech counter
+                self.consecutive_speech_count = 0
 
         # Debug logging for every frame (use DEBUG to reduce log spam)
         logger.debug(
             f"VAD Frame {self.frame_count}: prob={probability:.3f}, flag={speech_flag}, "
-            f"is_speeching={self.is_speeching}, silence_count={self.consecutive_silence_count}/{self.silence_frames}"
+            f"is_speeching={self.is_speeching}, "
+            f"speech_count={self.consecutive_speech_count}/{self.speech_frames}, "
+            f"silence_count={self.consecutive_silence_count}/{self.silence_frames}"
         )
 
         return self.is_speeching, probability
@@ -407,6 +680,7 @@ class VADProcessor:
     def reset(self) -> None:
         """Reset VAD state."""
         self.is_speeching = False
+        self.consecutive_speech_count = 0
         self.consecutive_silence_count = 0
         self.frame_count = 0
 
@@ -673,13 +947,28 @@ class ASRWebSocketService:
         # Initialize client-specific buffers and processors
         frame_buffer = FrameBuffer()  # Cross-message frame buffering (NO DATA LOSS!)
         speech_buffer = SpeechBuffer()  # For storing speech segments
+        ns_processor = NSProcessor()  # Noise suppression (RNNoise)
         vad_processor = VADProcessor()
 
         try:
             async for message in websocket:
                 # Check if message is binary (audio data)
                 if isinstance(message, bytes):
-                    # Add to frame buffer and extract complete VAD frames
+                    # Step 1: Apply Noise Suppression (NS) on raw audio data first
+                    if ns_processor.is_enabled():
+                        # Convert bytes to float32
+                        audio_float32 = (
+                            np.frombuffer(message, dtype=np.int16).astype(
+                                np.float32
+                            )
+                            / 32768.0
+                        )
+                        # Process through NS (handles buffering internally)
+                        denoised_float32 = ns_processor.process_frame(audio_float32)
+                        # Convert back to bytes for FrameBuffer
+                        message = (denoised_float32 * 32768).astype(np.int16).tobytes()
+
+                    # Step 2: Add to frame buffer and extract complete VAD frames
                     frames = frame_buffer.add(message)
 
                     # Debug logging (use DEBUG level to reduce spam)
@@ -687,7 +976,7 @@ class ASRWebSocketService:
                         f"[Client {client_id}] Received {len(message)} bytes, extracted {len(frames)} frame(s), {frame_buffer.get_remaining_size()} bytes remaining"
                     )
 
-                    # Process each complete VAD frame
+                    # Step 3: Process each complete VAD frame
                     for chunk_bytes in frames:
                         # Convert bytes to float32 audio for VAD and speech_buffer
                         chunk_float32 = (
@@ -795,7 +1084,7 @@ class ASRWebSocketService:
                     try:
                         data = json.loads(message)
                         await self.handle_command(
-                            websocket, data, frame_buffer, speech_buffer, vad_processor
+                            websocket, data, frame_buffer, speech_buffer, ns_processor, vad_processor
                         )
                     except json.JSONDecodeError:
                         await self.send_error(websocket, "Invalid JSON message", code=1)
@@ -814,6 +1103,7 @@ class ASRWebSocketService:
         data: dict,
         frame_buffer: FrameBuffer,
         speech_buffer: SpeechBuffer,
+        ns_processor: NSProcessor,
         vad_processor: VADProcessor,
     ):
         """Handle control commands from client."""
@@ -826,6 +1116,9 @@ class ASRWebSocketService:
             frame_buffer.clear()
             speech_buffer.clear()
             vad_processor.reset()
+            # Reinitialize NS processor to clear internal state
+            if ns_processor.is_enabled():
+                ns_processor.denoiser = RNNoise(sample_rate=ns_processor.sample_rate)
             await websocket.send(
                 json.dumps({"type": "reset", "message": "State reset successfully"})
             )
