@@ -70,6 +70,8 @@ class CloudServer:
                 server_version=self.config.mcp.server_version,
                 protocol_version=self.config.mcp.protocol_version,
                 instructions=self.config.mcp.instructions,
+                amap_api_key=self.config.mcp.amap_api_key,
+                weather_api_enabled=self.config.mcp.weather_api_enabled,
             )
             if self.config.mcp.enabled
             else None

@@ -46,6 +46,9 @@ class MCPConfig:
     server_version: str = "1.0.0"
     protocol_version: str = "2024-11-05"
     instructions: str = "ARCS Mini MCP Server"
+    # 高德地图 API 配置
+    amap_api_key: Optional[str] = None
+    weather_api_enabled: bool = True
 
 
 @dataclass
@@ -101,6 +104,8 @@ class Config:
             server_version=os.getenv("MCP_SERVER_VERSION", "1.0.0"),
             protocol_version=os.getenv("MCP_PROTOCOL_VERSION", "2024-11-05"),
             instructions=os.getenv("MCP_INSTRUCTIONS", "ARCS Mini MCP Server"),
+            amap_api_key=os.getenv("AMAP_API_KEY"),
+            weather_api_enabled=os.getenv("WEATHER_API_ENABLED", "true").lower() == "true",
         )
 
         client_tools = ClientToolsConfig(

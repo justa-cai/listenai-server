@@ -183,7 +183,7 @@ class LLMClient:
 
         try:
             session = await self._get_session()
-            print(f"LLM Request:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+            logger.debug(f"LLM Request:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
             async with session.post(url, headers=headers, json=payload) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -191,7 +191,7 @@ class LLMClient:
                     raise Exception(f"LLM API error: {response.status}")
 
                 result = await response.json()
-                print(
+                logger.info(
                     f"LLM Response:\n{json.dumps(result, ensure_ascii=False, indent=2)}"
                 )
                 return result
@@ -217,6 +217,17 @@ class LLMClient:
 
         # 使用配置的系统提示词，如果没有传入则使用默认的
         prompt = system_prompt or self.config.system_prompt
+
+        # 添加位置上下文到系统提示
+        if self.mcp_manager:
+            location_context = self.mcp_manager.get_location_context()
+            if location_context:
+                logger.info(f"Adding location context to system prompt: {location_context}")
+                if prompt:
+                    prompt = f"{prompt}\n\n# Location Context\n{location_context}\nWhen user asks about weather without specifying a city, use the current location above."
+                else:
+                    prompt = f"# Location Context\n{location_context}\nWhen user asks about weather without specifying a city, use the current location above."
+
         if prompt:
             all_messages.insert(0, {"role": "system", "content": prompt})
 
@@ -240,8 +251,10 @@ class LLMClient:
 
         tool_calls = message.get("tool_calls", [])
         logger.info(f"process_with_tools: tool_calls count: {len(tool_calls)}")
-
-        tool_calls = message.get("tool_calls", [])
+        if tool_calls:
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                logger.info(f"  Tool call: {func.get('name')} with args: {func.get('arguments')}")
 
         if tool_calls:
             all_messages.append(message)
@@ -282,6 +295,7 @@ class LLMClient:
                         execute_result = await self.mcp_manager.execute_tool(
                             tool_name, tool_args, tool_call_id
                         )
+                        logger.info(f"Server tool {tool_name} result: {execute_result.get('success')}")
                         tool_result_content = json.dumps(
                             execute_result.get(
                                 "result", execute_result.get("error", "Unknown error")
@@ -307,7 +321,9 @@ class LLMClient:
                 return response
             else:
                 # 只有服务端工具，正常完成流程
+                logger.info("All tools are server tools, calling LLM for final response...")
                 final_response = await self.chat_completion(all_messages, tools=tools_param)
+                logger.info(f"Final LLM response received, content: {final_response.get('choices', [{}])[0].get('message', {}).get('content', '')[:100]}")
                 return final_response
 
         return response
@@ -329,9 +345,20 @@ class LLMClient:
         """
         all_messages = messages.copy()
 
-        # 添加系统提示
-        if self.config.system_prompt:
-            all_messages.insert(0, {"role": "system", "content": self.config.system_prompt})
+        # 添加系统提示和位置上下文
+        prompt = self.config.system_prompt
+
+        # 添加位置上下文到系统提示
+        if self.mcp_manager:
+            location_context = self.mcp_manager.get_location_context()
+            if location_context:
+                if prompt:
+                    prompt = f"{prompt}\n\n# Location Context\n{location_context}\nWhen user asks about weather without specifying a city, use the current location above."
+                else:
+                    prompt = f"# Location Context\n{location_context}\nWhen user asks about weather without specifying a city, use the current location above."
+
+        if prompt:
+            all_messages.insert(0, {"role": "system", "content": prompt})
 
         # 收集工具定义
         tools = []
