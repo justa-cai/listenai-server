@@ -16,7 +16,7 @@ class ServerConfig:
     max_connections: int = 100
     max_concurrent_requests: int = 10
     max_queue_size: int = 50
-    num_model_workers: int = 3  # Number of model worker threads
+    num_model_workers: int = 1  # Number of model worker threads
     request_timeout: int = 600  # Increased to 10 minutes
 
     # Audio settings

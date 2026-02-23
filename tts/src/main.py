@@ -13,7 +13,6 @@ from .http_server import HTTPWebServer
 from .voice_manager import get_voice_manager
 from .logging_config import setup_logging
 from .metrics import init_metrics
-from .model_cache import ModelCache
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +59,6 @@ async def main():
 
     # Initialize metrics
     init_metrics(config.server)
-
-    # Load model at startup
-    logger.info("Loading VoxCPM model...")
-    model_cache = await ModelCache.get_instance()
-    model = await model_cache.get_model(config.model)
-    logger.info(f"Model loaded successfully: {config.model.model_name}")
 
     # Resolve voice directory path
     voice_dir = config.server.voice_dir
