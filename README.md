@@ -1,14 +1,28 @@
 # ListenAI Server
 
-多模块 AI 语音服务系统 - 支持 ASR(语音识别)、TTS(语音合成)、VAD(语音活动检测) 等功能
+适合arcs_mini开发板的 多模块 AI 语音服务系统 - 支持 ASR(语音识别)、TTS(语音合成)、VAD(语音活动检测) 等功能
 
-## 环境要求
+## 模块说明
+
+| 模块 | 功能 | 主要技术 | 端口 |
+|------|------|----------|------|
+| `asr/` | 实时语音识别服务，支持流式音频输入 | FunASR-Nano, WebSocket, TenVAD | WS: 9200, HTTP: 9201 |
+| `tts/` | 文本转语音，支持声音克隆和流式输出 | VoxCPM-0.5B, WebSocket, 模型推理池 | WS: 9300, WebUI: 9301 |
+| `vad/` | 语音活动检测，识别语音段起止 | TEN Framework, ONNX | - |
+| `llm/` | 大语言模型客户端，支持对话和工具调用 | OpenAI API, Token性能分析 | - |
+| `music/` | 音乐HTTP服务，AI智能搜索，图片生成 | OpenAI API, SiliconFlow, Z-Image-Turbo | HTTP: 9100 |
+| `cloud/` | LLM网关，会话管理，MCP工具调用 | WebSocket, MCP协议, aiohttp | WS: 9400 |
+
+
+## 环境初始化
+
+### 环境要求
 
 - Python 3.10.x
 - Linux (推荐 Ubuntu 20.04+)
 - NVIDIA GPU + CUDA 12.x (可选，用于加速)
 
-## 快速开始
+### 安装python依赖
 
 ```bash
 # 1. 安装 uv (如果未安装)
@@ -21,34 +35,47 @@ source .venv/bin/activate
 # 3. 安装依赖
 uv pip install -r requirements.txt
 
-# 4. 安装本地模块 (可选)
-uv pip install -e ./vad/ten-vad
 ```
 
-## 模块说明
+### 
 
-| 模块 | 功能 | 主要技术 |
-|------|------|----------|
-| `asr/` | 语音识别 | FunASR, Whisper, WeNet |
-| `tts/` | 语音合成 | VoxCPM, pyopenjtalk |
-| `vad/` | 语音活动检测 | TenVAD, RNNoise |
-| `llm/` | 大语言模型 | OpenAI API |
-| `music/` | 音乐处理 | Diffusers, Transformers |
-| `cloud/` | 云服务 | |
+## 运行服务
 
-## 技术栈
+### 初始化环境
+```bash
+source .venv/bin/activate
+```
 
-- **深度学习**: PyTorch 2.10, Transformers 5.2
-- **Web 框架**: FastAPI, WebSockets
-- **音频处理**: Librosa, SoundFile, FunASR
-- **GPU 加速**: CUDA 12.x, cuDNN
+### ASR
+```bash
+cd asr
+sh auto.sh
+```
 
-## 详细文档
+### TTS
+```
+cd tts
+sh auto.sh
+```
 
-- [安装指南](INSTALL.md)
-- ASR API: `asr/ASR_WEBSOCKET_API.md`
-- TTS Voices: `tts/VOICES.md`
+### CLOUD
+```bash
+cd cloud
+sh auto.sh
+```
 
-## License
+### MUSIC
+```bash
+cd music
+sh auto.sh
+```
 
-Proprietary - All rights reserved
+---
+
+<div align="center">
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=justa-cai/listenai-server&type=Date)](https://star-history.com/#justa-cai/listenai-server&Date)
+
+</div>
