@@ -10,7 +10,7 @@ import time
 import traceback
 from collections import deque
 from pathlib import Path
-from typing import Optional, Deque, Tuple
+from typing import Optional, Deque, Tuple, Literal
 
 import numpy as np
 import soundfile as sf
@@ -25,11 +25,16 @@ from model import FunASRNano
 # Configuration
 # ============================================================================
 
+# Batch Mode Configuration
+BATCH_MAX_DURATION = 300.0  # Maximum audio duration for batch mode (seconds)
+BATCH_MIN_DURATION = 0.3  # Minimum audio duration for batch mode (seconds)
+BATCH_CHUNK_SIZE = 4096  # Chunk size for sending batch progress updates
+
 # VAD Configuration
 VAD_HOP_SIZE = 256
 VAD_THRESHOLD = 0.5
 VAD_SPEECH_FRAMES = 3  # Need N consecutive speech frames to enter speech state (prevents false triggers)
-VAD_SILENCE_FRAMES = 5  # Need N consecutive silence frames to exit speech state (hysteresis)
+VAD_SILENCE_FRAMES = 10  # Need N consecutive silence frames to exit speech state (hysteresis)
 
 # ASR Configuration
 ASR_MODEL_DIR = "FunAudioLLM/Fun-ASR-Nano-2512"
@@ -221,12 +226,16 @@ class SpeechBuffer:
     Used for ASR recognition after VAD detects speech end.
     """
 
-    def __init__(self, sample_rate: int = ASR_SAMPLE_RATE):
+    # Work mode enum
+    WorkMode = Literal["streaming", "batch_receiving", "batch_ready"]
+
+    def __init__(self, sample_rate: int = ASR_SAMPLE_RATE, client_id: str = "unknown"):
         self.sample_rate = sample_rate
         self.buffer: list[np.ndarray] = []
         self.total_samples = 0
         self.is_recording = False
         self.start_time: Optional[float] = None
+        self.client_id = client_id  # Add client_id for debugging
 
     def start(self) -> None:
         """Start recording speech segment."""
@@ -278,6 +287,73 @@ class SpeechBuffer:
 
         audio = self.get_audio()
         return np.sqrt(np.mean(audio ** 2))
+
+
+class BatchAudioBuffer:
+    """
+    Audio buffer for batch recognition mode.
+    Stores complete audio data for non-streaming ASR recognition.
+    """
+
+    def __init__(self, sample_rate: int = ASR_SAMPLE_RATE, max_duration: float = BATCH_MAX_DURATION):
+        self.sample_rate = sample_rate
+        self.max_samples = int(sample_rate * max_duration)
+        self.buffer: list[np.ndarray] = []
+        self.total_samples = 0
+        self.total_bytes = 0
+        self.is_active = False  # Whether batch mode is active
+
+    def start(self) -> None:
+        """Start batch mode, clear existing buffer."""
+        self.buffer.clear()
+        self.total_samples = 0
+        self.total_bytes = 0
+        self.is_active = True
+
+    def add(self, audio_data: bytes) -> int:
+        """
+        Add audio data to buffer. Returns number of samples added.
+        Raises ValueError if buffer exceeds maximum size.
+        """
+        if not self.is_active:
+            return 0
+
+        # Convert bytes to int16 numpy array
+        audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+        samples_added = len(audio)
+
+        # Check if adding would exceed max size
+        if self.total_samples + samples_added > self.max_samples:
+            raise ValueError(
+                f"Audio duration exceeds maximum of {BATCH_MAX_DURATION}s"
+            )
+
+        self.buffer.append(audio)
+        self.total_samples += samples_added
+        self.total_bytes += len(audio_data)
+
+        return samples_added
+
+    def get_audio(self) -> np.ndarray:
+        """Get all audio in buffer as a single array."""
+        if not self.buffer:
+            return np.array([], dtype=np.float32)
+        return np.concatenate(self.buffer)
+
+    def get_duration(self) -> float:
+        """Get duration of audio in buffer in seconds."""
+        return self.total_samples / self.sample_rate
+
+    def is_empty(self) -> bool:
+        """Check if buffer is empty."""
+        return len(self.buffer) == 0
+
+    def clear(self) -> None:
+        """Clear the buffer."""
+        self.buffer.clear()
+        self.total_samples = 0
+        self.total_bytes = 0
+        self.is_active = False
 
 
 # ============================================================================
@@ -946,9 +1022,13 @@ class ASRWebSocketService:
 
         # Initialize client-specific buffers and processors
         frame_buffer = FrameBuffer()  # Cross-message frame buffering (NO DATA LOSS!)
-        speech_buffer = SpeechBuffer()  # For storing speech segments
+        speech_buffer = SpeechBuffer(client_id=str(client_id))  # For storing speech segments
+        batch_buffer = BatchAudioBuffer()  # For batch mode audio
         ns_processor = NSProcessor()  # Noise suppression (RNNoise)
         vad_processor = VADProcessor()
+
+        # Work mode: "streaming" (default) or "batch_receiving" or "batch_ready"
+        work_mode: SpeechBuffer.WorkMode = "streaming"
 
         try:
             async for message in websocket:
@@ -976,121 +1056,144 @@ class ASRWebSocketService:
                         f"[Client {client_id}] Received {len(message)} bytes, extracted {len(frames)} frame(s), {frame_buffer.get_remaining_size()} bytes remaining"
                     )
 
-                    # Step 3: Process each complete VAD frame
-                    for chunk_bytes in frames:
-                        # Convert bytes to float32 audio for VAD and speech_buffer
-                        chunk_float32 = (
-                            np.frombuffer(chunk_bytes, dtype=np.int16).astype(
-                                np.float32
-                            )
-                            / 32768.0
-                        )
+                    # Step 3: Process based on work mode
+                    if work_mode == "batch_receiving":
+                        # Batch mode: accumulate all audio data directly
+                        try:
+                            # In batch mode, bypass frame buffer and add raw message
+                            batch_buffer.add(message)
 
-                        # Process this single VAD frame (this may change the state)
-                        was_speeching = vad_processor.is_speeching
-                        is_speeching, _ = vad_processor.process_frame(chunk_float32)
-
-                        # State machine: handle speech segment boundaries
-                        if not was_speeching and is_speeching:
-                            # Speech segment STARTED
-                            speech_buffer.start()
-                            speech_buffer.add(chunk_float32)
-                            logger.info(f"[Client {client_id}] Speech segment started")
-                            # Send VAD event to client
-                            await self.send_vad_event(websocket, speech_started=True)
-                        elif was_speeching and is_speeching:
-                            # Still in speech - continue adding
-                            speech_buffer.add(chunk_float32)
-                        elif was_speeching and not is_speeching:
-                            # Speech segment ENDED - add final frame and process
-                            speech_buffer.add(chunk_float32)
-                            speech_buffer.stop()
-
-                            duration = speech_buffer.get_duration()
-                            samples = speech_buffer.total_samples
-
-                            # Send VAD event to client
-                            await self.send_vad_event(websocket, speech_started=False, duration=duration, samples=samples)
-
-                            # Calculate energy for filtering
-                            energy = speech_buffer.get_rms_energy()
-                            logger.info(
-                                f"[Client {client_id}] Speech segment ended - "
-                                f"duration: {duration:.2f}s, samples: {samples}, "
-                                f"energy: {energy:.6f}"
+                            # Send progress update periodically
+                            if batch_buffer.total_bytes % BATCH_CHUNK_SIZE == 0 or len(frames) == 0:
+                                await self.send_batch_progress(
+                                    websocket,
+                                    state="receiving",
+                                    received_bytes=batch_buffer.total_bytes
+                                )
+                        except ValueError as e:
+                            logger.error(f"[Client {client_id}] Batch buffer error: {e}")
+                            await self.send_error(websocket, str(e), code=4)
+                            batch_buffer.clear()
+                            work_mode = "streaming"
+                    else:
+                        # Streaming mode: process VAD frames
+                        for chunk_bytes in frames:
+                            # Convert bytes to float32 audio for VAD and speech_buffer
+                            chunk_float32 = (
+                                np.frombuffer(chunk_bytes, dtype=np.int16).astype(
+                                    np.float32
+                                )
+                                / 32768.0
                             )
 
-                            # Filter by energy threshold
-                            if energy < ENERGY_THRESHOLD:
-                                logger.info(
-                                    f"[Client {client_id}] Speech segment energy too low "
-                                    f"({energy:.6f} < {ENERGY_THRESHOLD}), skipping ASR"
-                                )
-                                speech_buffer.clear()
-                                continue
+                            # Process this single VAD frame (this may change the state)
+                            was_speeching = vad_processor.is_speeching
+                            is_speeching, _ = vad_processor.process_frame(chunk_float32)
 
-                            # Calculate speech ratio for filtering sudden noises
-                            speech_audio = speech_buffer.get_audio()
-                            speech_ratio = vad_processor.calculate_speech_ratio(speech_audio)
-                            logger.info(
-                                f"[Client {client_id}] Speech ratio: {speech_ratio:.2%}"
-                            )
+                            # State machine: handle speech segment boundaries
+                            if not was_speeching and is_speeching:
+                                # Speech segment STARTED
+                                speech_buffer.start()
+                                speech_buffer.add(chunk_float32)
+                                logger.info(f"[Client {client_id}] Speech segment started")
+                                # Send VAD event to client
+                                await self.send_vad_event(websocket, speech_started=True)
+                            elif was_speeching and is_speeching:
+                                # Still in speech - continue adding
+                                speech_buffer.add(chunk_float32)
+                            elif was_speeching and not is_speeching:
+                                # Speech segment ENDED - add final frame and process
+                                speech_buffer.add(chunk_float32)
+                                speech_buffer.stop()
 
-                            # Filter by speech ratio threshold
-                            if speech_ratio < VAD_SPEECH_RATIO_THRESHOLD:
-                                logger.info(
-                                    f"[Client {client_id}] Speech ratio too low "
-                                    f"({speech_ratio:.2%} < {VAD_SPEECH_RATIO_THRESHOLD:.0%}), "
-                                    f"likely noise, skipping ASR"
-                                )
-                                speech_buffer.clear()
-                                continue
+                                duration = speech_buffer.get_duration()
+                                samples = speech_buffer.total_samples
 
-                            if duration >= 0.3:  # Minimum 0.3 seconds
+                                # Send VAD event to client
+                                await self.send_vad_event(websocket, speech_started=False, duration=duration, samples=samples)
+
+                                # Calculate energy for filtering
+                                energy = speech_buffer.get_rms_energy()
                                 logger.info(
-                                    f"[Client {client_id}] Running segment recognition..."
+                                    f"[Client {client_id}] Speech segment ended - "
+                                    f"duration: {duration:.2f}s, samples: {samples}, "
+                                    f"energy: {energy:.6f}"
                                 )
-                                result = self.asr_processor.process_segment_from_buffer(
-                                    speech_buffer
-                                )
-                                if result:
-                                    text, segment_id = result
+
+                                # Filter by energy threshold
+                                if energy < ENERGY_THRESHOLD:
                                     logger.info(
-                                        f"[Client {client_id}] Segment recognition result: {text}"
+                                        f"[Client {client_id}] Speech segment energy too low "
+                                        f"({energy:.6f} < {ENERGY_THRESHOLD}), skipping ASR"
                                     )
+                                    speech_buffer.clear()
+                                    continue
 
-                                    # Validate ASR result to filter invalid/non-speech audio
-                                    if not self.asr_processor.is_valid_asr_result(text):
+                                # Calculate speech ratio for filtering sudden noises
+                                speech_audio = speech_buffer.get_audio()
+                                speech_ratio = vad_processor.calculate_speech_ratio(speech_audio)
+                                logger.info(
+                                    f"[Client {client_id}] Speech ratio: {speech_ratio:.2%}"
+                                )
+
+                                # Filter by speech ratio threshold
+                                if speech_ratio < VAD_SPEECH_RATIO_THRESHOLD:
+                                    logger.info(
+                                        f"[Client {client_id}] Speech ratio too low "
+                                        f"({speech_ratio:.2%} < {VAD_SPEECH_RATIO_THRESHOLD:.0%}), "
+                                        f"likely noise, skipping ASR"
+                                    )
+                                    speech_buffer.clear()
+                                    continue
+
+                                # Check minimum duration and run recognition
+                                if duration >= 0.3:  # Minimum 0.3 seconds
+                                    logger.info(
+                                        f"[Client {client_id}] Running segment recognition..."
+                                    )
+                                    result = self.asr_processor.process_segment_from_buffer(
+                                        speech_buffer
+                                    )
+                                    if result:
+                                        text, segment_id = result
                                         logger.info(
-                                            f"[Client {client_id}] ASR result filtered (invalid): {text}"
+                                            f"[Client {client_id}] Segment recognition result: {text}"
                                         )
+
+                                        # Validate ASR result to filter invalid/non-speech audio
+                                        if not self.asr_processor.is_valid_asr_result(text):
+                                            logger.info(
+                                                f"[Client {client_id}] ASR result filtered (invalid): {text}"
+                                            )
+                                        else:
+                                            await self.send_result(
+                                                websocket,
+                                                text,
+                                                is_final=True,
+                                                is_speeching=False,
+                                                segment_id=segment_id,
+                                            )
                                     else:
-                                        await self.send_result(
-                                            websocket,
-                                            text,
-                                            is_final=True,
-                                            is_speeching=False,
-                                            segment_id=segment_id,
+                                        logger.warning(
+                                            f"[Client {client_id}] Segment recognition failed"
                                         )
                                 else:
-                                    logger.warning(
-                                        f"[Client {client_id}] Segment recognition failed"
+                                    logger.info(
+                                        f"[Client {client_id}] Speech segment too short ({duration:.2f}s), skipping"
                                     )
-                            else:
-                                logger.info(
-                                    f"[Client {client_id}] Speech segment too short ({duration:.2f}s), skipping"
-                                )
 
-                            # Clear speech buffer for next segment
-                            speech_buffer.clear()
+                                # Clear speech buffer for next segment (only after speech end)
+                                speech_buffer.clear()
 
                 elif isinstance(message, str):
                     # Handle text messages (commands, etc.)
                     try:
                         data = json.loads(message)
                         await self.handle_command(
-                            websocket, data, frame_buffer, speech_buffer, ns_processor, vad_processor
+                            websocket, data, frame_buffer, speech_buffer, batch_buffer, ns_processor, vad_processor, work_mode
                         )
+                        # Update work_mode from handle_command (it may be modified)
+                        work_mode = data.get("_work_mode", work_mode)
                     except json.JSONDecodeError:
                         await self.send_error(websocket, "Invalid JSON message", code=1)
 
@@ -1108,8 +1211,10 @@ class ASRWebSocketService:
         data: dict,
         frame_buffer: FrameBuffer,
         speech_buffer: SpeechBuffer,
+        batch_buffer: BatchAudioBuffer,
         ns_processor: NSProcessor,
         vad_processor: VADProcessor,
+        work_mode: SpeechBuffer.WorkMode,
     ):
         """Handle control commands from client."""
         command = data.get("command")
@@ -1120,13 +1225,119 @@ class ASRWebSocketService:
         elif command == "reset":
             frame_buffer.clear()
             speech_buffer.clear()
+            batch_buffer.clear()
             vad_processor.reset()
             # Reinitialize NS processor to clear internal state
             if ns_processor.is_enabled():
                 ns_processor.denoiser = RNNoise(sample_rate=ns_processor.sample_rate)
+            data["_work_mode"] = "streaming"  # Reset to streaming mode
             await websocket.send(
                 json.dumps({"type": "reset", "message": "State reset successfully"})
             )
+
+        elif command == "batch_start":
+            # Start batch recognition mode
+            batch_buffer.start()
+            data["_work_mode"] = "batch_receiving"
+            logger.info(f"[Client {id(websocket)}] Batch mode started")
+            await self.send_batch_progress(
+                websocket,
+                state="receiving",
+                message="Batch mode started, waiting for audio data"
+            )
+
+        elif command == "batch_end":
+            # End batch mode and trigger recognition
+            if work_mode != "batch_receiving":
+                await self.send_error(websocket, "Batch mode not active", code=4)
+                return
+
+            if batch_buffer.is_empty():
+                await self.send_error(websocket, "No audio data received", code=5)
+                batch_buffer.clear()
+                data["_work_mode"] = "streaming"
+                return
+
+            duration = batch_buffer.get_duration()
+            if duration < BATCH_MIN_DURATION:
+                await self.send_error(
+                    websocket,
+                    f"Audio too short: {duration:.2f}s < {BATCH_MIN_DURATION}s",
+                    code=6
+                )
+                batch_buffer.clear()
+                data["_work_mode"] = "streaming"
+                return
+
+            # Send recognizing state
+            await self.send_batch_progress(
+                websocket,
+                state="recognizing",
+                message="Processing audio..."
+            )
+
+            # Get audio and run recognition
+            audio = batch_buffer.get_audio()
+            samples = batch_buffer.total_samples
+
+            # Run ASR on complete audio
+            segment_counter = getattr(self, "_batch_segment_counter", 0) + 1
+            self._batch_segment_counter = segment_counter
+
+            temp_dir = Path(ASR_TEMP_DIR)
+            temp_dir.mkdir(exist_ok=True)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            temp_wav_path = temp_dir / f"batch_{timestamp}_id{segment_counter}.wav"
+
+            try:
+                # Write audio to temp file
+                sf.write(str(temp_wav_path), audio, ASR_SAMPLE_RATE, subtype="PCM_16")
+                logger.info(f"Created batch wav file: {temp_wav_path}, duration: {duration:.2f}s")
+
+                # Run inference
+                res = self.asr_processor.model.inference(
+                    data_in=[str(temp_wav_path)], **self.asr_processor.kwargs
+                )
+
+                # Extract text
+                result = res[0]
+                if isinstance(result, dict):
+                    text = result.get("text", "")
+                elif isinstance(result, list) and len(result) > 0:
+                    if isinstance(result[0], dict):
+                        text = result[0].get("text", "")
+                    else:
+                        text = str(result[0])
+                else:
+                    text = str(result)
+
+                logger.info(f"Batch ASR result (ID={segment_counter}): {text}")
+
+                # Delete temp file if configured
+                if not ASR_KEEP_TEMP_FILES:
+                    temp_wav_path.unlink()
+
+                # Send result
+                await self.send_batch_result(
+                    websocket,
+                    text=text,
+                    duration=duration,
+                    samples=samples
+                )
+
+                # Send complete progress
+                await self.send_batch_progress(
+                    websocket,
+                    state="complete",
+                    message="Recognition complete"
+                )
+
+            except Exception as e:
+                logger.error(f"Batch ASR error: {e}\n{traceback.format_exc()}")
+                await self.send_error(websocket, f"Recognition failed: {e}", code=2)
+            finally:
+                batch_buffer.clear()
+                data["_work_mode"] = "streaming"
 
         else:
             await self.send_error(websocket, f"Unknown command: {command}", code=3)
@@ -1184,6 +1395,43 @@ class ASRWebSocketService:
             await websocket.send(json.dumps(error, ensure_ascii=False))
         except:
             pass
+
+    async def send_batch_progress(
+        self,
+        websocket,
+        state: str,
+        message: str = None,
+        received_bytes: int = None,
+    ):
+        """Send batch recognition progress to client."""
+        progress = {
+            "type": "batch_progress",
+            "state": state,
+            "timestamp": int(time.time() * 1000),
+        }
+        if message:
+            progress["message"] = message
+        if received_bytes is not None:
+            progress["received_bytes"] = received_bytes
+
+        await websocket.send(json.dumps(progress, ensure_ascii=False))
+
+    async def send_batch_result(
+        self,
+        websocket,
+        text: str,
+        duration: float,
+        samples: int,
+    ):
+        """Send batch recognition result to client."""
+        result = {
+            "type": "batch_result",
+            "text": text,
+            "duration": round(duration, 3),
+            "samples": samples,
+            "timestamp": int(time.time() * 1000),
+        }
+        await websocket.send(json.dumps(result, ensure_ascii=False))
 
     async def start(self):
         """Start the WebSocket server."""

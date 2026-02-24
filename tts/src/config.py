@@ -90,7 +90,7 @@ class Config:
             max_connections=int(os.getenv("TTS_MAX_CONNECTIONS", "100")),
             max_concurrent_requests=int(os.getenv("TTS_MAX_CONCURRENT", "10")),
             max_queue_size=int(os.getenv("TTS_MAX_QUEUE_SIZE", "50")),
-            num_model_workers=int(os.getenv("TTS_NUM_MODEL_WORKERS", "3")),
+            num_model_workers=int(os.getenv("TTS_NUM_MODEL_WORKERS", "1")),
             request_timeout=int(os.getenv("TTS_REQUEST_TIMEOUT", "600")),
             chunk_size=int(os.getenv("TTS_CHUNK_SIZE", "4096")),
             sample_rate=int(os.getenv("TTS_SAMPLE_RATE", "16000")),
