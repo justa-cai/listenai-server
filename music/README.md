@@ -23,9 +23,9 @@
 
 ```bash
 # 设置环境变量（可选）
-export OPENAI_API_BASE="http://192.168.13.228:8000/v1/"
+export OPENAI_API_BASE="http://localhost:9500/v1/"
 export OPENAI_API_KEY="123"
-export OPENAI_MODEL="Qwen3-30B-A3B"
+export OPENAI_MODEL="Qwen3-4B-Instruct-2507"
 
 # 启动服务器
 python3 server.py

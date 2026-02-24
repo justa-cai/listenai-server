@@ -25,9 +25,9 @@ from tqdm import tqdm
 load_dotenv()
 
 # LLM Configuration
-LLM_API_BASE = os.getenv("LLM_API_BASE", "http://192.168.13.228:8000/v1/")
+LLM_API_BASE = os.getenv("LLM_API_BASE", "http://localhost:9500/v1/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "123")
-LLM_MODEL = os.getenv("LLM_MODEL", "Qwen3-30B-A3B")
+LLM_MODEL = os.getenv("LLM_MODEL", "Qwen3-4B-Instruct-2507")
 
 # Thread counts
 LLM_THREAD_COUNT = 2
