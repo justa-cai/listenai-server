@@ -84,11 +84,19 @@ cd asr
 sh auto.sh
 ```
 
+#### 测试客户端
+[http://localhost:9201/](http://localhost:9201/)
+![网页测试客户端](pic/ASR_WEBCLIENT.png)
+
 ### TTS
 ```
 cd tts
 sh auto.sh
 ```
+
+#### 测试客户端
+[http://localhost:9301/](http://localhost:9301/)
+![网页测试客户端](pic/TTS_WEBCLIENT.png)
 
 ### CLOUD
 ```bash
@@ -96,11 +104,20 @@ cd cloud
 sh auto.sh
 ```
 
+#### 测试客户端
+[http://localhost:9401/](http://localhost:9401/)
+![网页测试客户端](pic/CLOUD_WEBCLIENT.png)
+
 ### MUSIC
 ```bash
 cd music
 sh auto.sh
 ```
+
+#### 测试客户端
+[http://localhost:9100/](http://localhost:9100)
+![网页测试客户端](pic/CLOUD_WEBCLIENT.png)
+
 
 ### LLM
 ```bash
