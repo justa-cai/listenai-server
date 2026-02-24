@@ -40,6 +40,18 @@ class LLMConfig:
 
 
 @dataclass
+class RoleplayConfig:
+    """角色扮演模式LLM配置"""
+    enabled: bool = True
+    base_url: Optional[str] = None  # None表示使用默认LLM配置
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    timeout: int = 120
+    temperature: float = 0.8
+    max_tokens: int = 2048
+
+
+@dataclass
 class MCPConfig:
     enabled: bool = True
     server_name: str = "arcs-mini-mcp-server"
@@ -49,6 +61,12 @@ class MCPConfig:
     # 高德地图 API 配置
     amap_api_key: Optional[str] = None
     weather_api_enabled: bool = True
+    # 角色扮演模式 LLM 配置
+    roleplay: RoleplayConfig = None
+
+    def __post_init__(self):
+        if self.roleplay is None:
+            self.roleplay = RoleplayConfig()
 
 
 @dataclass
@@ -106,6 +124,15 @@ class Config:
             instructions=os.getenv("MCP_INSTRUCTIONS", "ARCS Mini MCP Server"),
             amap_api_key=os.getenv("AMAP_API_KEY"),
             weather_api_enabled=os.getenv("WEATHER_API_ENABLED", "true").lower() == "true",
+            roleplay=RoleplayConfig(
+                enabled=os.getenv("ROLEPLAY_LLM_ENABLED", "true").lower() == "true",
+                base_url=os.getenv("ROLEPLAY_LLM_BASE_URL"),
+                model=os.getenv("ROLEPLAY_LLM_MODEL"),
+                api_key=os.getenv("ROLEPLAY_LLM_API_KEY"),
+                timeout=int(os.getenv("ROLEPLAY_LLM_TIMEOUT", "120")),
+                temperature=float(os.getenv("ROLEPLAY_LLM_TEMPERATURE", "0.8")),
+                max_tokens=int(os.getenv("ROLEPLAY_LLM_MAX_TOKENS", "2048")),
+            ),
         )
 
         client_tools = ClientToolsConfig(

@@ -8,6 +8,8 @@ import logging
 import aiohttp
 import requests
 
+from .roleplay_manager import get_roleplay_manager
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,6 +40,8 @@ class MCPToolManager:
         instructions: str = "",
         amap_api_key: Optional[str] = None,
         weather_api_enabled: bool = True,
+        roleplay_llm_url: Optional[str] = None,
+        roleplay_llm_model: Optional[str] = None,
     ):
         self.server_name = server_name
         self.server_version = server_version
@@ -48,6 +52,8 @@ class MCPToolManager:
         self._location_info: dict[str, Any] = {}
         self._amap_api_key = amap_api_key
         self._weather_api_enabled = weather_api_enabled and amap_api_key is not None
+        self._roleplay_llm_model = roleplay_llm_model
+        self._roleplay_manager = get_roleplay_manager(default_llm_url=roleplay_llm_url)
         self._register_builtin_tools()
         # 异步获取位置信息（不阻塞初始化）
         asyncio.create_task(self._fetch_location_info())
@@ -100,6 +106,116 @@ class MCPToolManager:
                     "properties": {},
                 },
                 handler=self._get_location,
+            )
+        )
+
+        # 角色扮演相关工具
+        self.register_tool(
+            ToolDefinition(
+                name="enter_roleplay_mode",
+                description="Enter roleplay mode. Use this when user explicitly asks to roleplay or pretend to be a specific character (like '扮演至尊宝', '进入角色扮演模式', '拜年模式'). Returns system prompt for the character.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "character": {
+                            "type": "string",
+                            "description": "Character name to roleplay. Available characters: 至尊宝, 紫霞仙子, 牛魔王, 唐僧, 拜年模式",
+                            "enum": ["至尊宝", "紫霞仙子", "牛魔王", "唐僧", "拜年模式"],
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session identifier (optional, defaults to 'default')",
+                        },
+                    },
+                    "required": ["character"],
+                },
+                handler=self._enter_roleplay_mode,
+            )
+        )
+
+        self.register_tool(
+            ToolDefinition(
+                name="exit_roleplay_mode",
+                description="Exit roleplay mode. Use this when user explicitly asks to exit roleplay (like '退出角色扮演模式', '停止扮演').",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session identifier (optional, defaults to 'default')",
+                        },
+                    },
+                },
+                handler=self._exit_roleplay_mode,
+            )
+        )
+
+        self.register_tool(
+            ToolDefinition(
+                name="get_roleplay_status",
+                description="Get current roleplay mode status, including active character and dialogue count.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session identifier (optional, defaults to 'default')",
+                        },
+                    },
+                },
+                handler=self._get_roleplay_status,
+            )
+        )
+
+        self.register_tool(
+            ToolDefinition(
+                name="list_available_characters",
+                description="List all available characters for roleplay mode.",
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                },
+                handler=self._list_available_characters,
+            )
+        )
+
+        # LLM服务器配置相关工具
+        self.register_tool(
+            ToolDefinition(
+                name="get_roleplay_llm_config",
+                description="Get the LLM server configuration for the current roleplay session. Returns the LLM server URL being used.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session identifier (optional, defaults to 'default')",
+                        },
+                    },
+                },
+                handler=self._get_roleplay_llm_config,
+            )
+        )
+
+        self.register_tool(
+            ToolDefinition(
+                name="set_roleplay_llm_url",
+                description="Set a custom LLM server URL for the current roleplay session. This overrides the default and character-specific settings.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "llm_url": {
+                            "type": "string",
+                            "description": "LLM server URL (e.g., 'http://localhost:8000/v1/chat/completions', 'https://api.openai.com/v1/chat/completions')",
+                        },
+                        "session_id": {
+                            "type": "string",
+                            "description": "Session identifier (optional, defaults to 'default')",
+                        },
+                    },
+                    "required": ["llm_url"],
+                },
+                handler=self._set_roleplay_llm_url,
             )
         )
 
@@ -530,3 +646,80 @@ class MCPToolManager:
     def get_location_info(self) -> dict[str, Any]:
         """获取完整的位置信息"""
         return self._location_info.copy()
+
+    # ========== 角色扮演相关方法 ==========
+
+    def _enter_roleplay_mode(
+        self,
+        character: str,
+        session_id: str = "default"
+    ) -> dict[str, Any]:
+        """进入角色扮演模式"""
+        return self._roleplay_manager.enter_roleplay_mode(character, session_id)
+
+    def _exit_roleplay_mode(self, session_id: str = "default") -> dict[str, Any]:
+        """退出角色扮演模式"""
+        return self._roleplay_manager.exit_roleplay_mode(session_id)
+
+    def _get_roleplay_status(self, session_id: str = "default") -> dict[str, Any]:
+        """获取角色扮演状态"""
+        return self._roleplay_manager.get_roleplay_status(session_id)
+
+    def _list_available_characters(self) -> dict[str, Any]:
+        """列出所有可用角色"""
+        characters = self._roleplay_manager.get_available_characters()
+        return {
+            "success": True,
+            "characters": characters,
+            "count": len(characters),
+        }
+
+    def is_in_roleplay_mode(self, session_id: str = "default") -> bool:
+        """检查是否处于角色扮演模式"""
+        return self._roleplay_manager.is_in_roleplay_mode(session_id)
+
+    def get_roleplay_system_prompt(self, session_id: str = "default") -> Optional[str]:
+        """获取角色扮演的系统提示词"""
+        return self._roleplay_manager.get_system_prompt(session_id)
+
+    def add_roleplay_dialogue(
+        self,
+        session_id: str,
+        user_message: str,
+        response: str
+    ) -> None:
+        """添加角色扮演对话记录"""
+        self._roleplay_manager.add_dialogue(session_id, user_message, response)
+
+    def get_roleplay_messages(
+        self,
+        session_id: str,
+        user_message: str
+    ) -> Optional[list[dict[str, str]]]:
+        """获取角色扮演模式的LLM消息列表（OpenAI格式）"""
+        return self._roleplay_manager.get_messages_for_completion(session_id, user_message)
+
+    def _get_roleplay_llm_config(self, session_id: str = "default") -> dict[str, Any]:
+        """获取角色扮演的LLM配置"""
+        return self._roleplay_manager.get_llm_config(session_id)
+
+    def _set_roleplay_llm_url(
+        self,
+        llm_url: str,
+        session_id: str = "default"
+    ) -> dict[str, Any]:
+        """设置角色扮演会话的LLM服务器地址"""
+        self._roleplay_manager.set_session_llm_url(session_id, llm_url)
+        return {
+            "success": True,
+            "message": f"LLM server URL set to: {llm_url}",
+            "session_id": session_id,
+        }
+
+    def get_roleplay_llm_url(self, session_id: str = "default") -> str:
+        """获取角色扮演会话的LLM服务器地址"""
+        return self._roleplay_manager.get_llm_server_url(session_id)
+
+    def get_roleplay_llm_model(self) -> Optional[str]:
+        """获取角色扮演模式的LLM模型名称"""
+        return self._roleplay_llm_model

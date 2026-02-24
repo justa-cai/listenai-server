@@ -72,6 +72,8 @@ class CloudServer:
                 instructions=self.config.mcp.instructions,
                 amap_api_key=self.config.mcp.amap_api_key,
                 weather_api_enabled=self.config.mcp.weather_api_enabled,
+                roleplay_llm_url=self.config.mcp.roleplay.base_url,
+                roleplay_llm_model=self.config.mcp.roleplay.model,
             )
             if self.config.mcp.enabled
             else None
@@ -268,7 +270,7 @@ class CloudServer:
 
             try:
                 logger.info("Calling process_with_tools...")
-                response = await conn.llm_client.process_with_tools(messages)
+                response = await conn.llm_client.process_with_tools(messages, session_id=conn.session.session_id)
                 logger.info("process_with_tools returned, extracting content and tool_calls...")
                 logger.info(f"Response structure: choices={len(response.get('choices', []))}, "
                            f"has_message={bool(response.get('choices', [{}])[0].get('message')) if response.get('choices') else False}")
@@ -626,7 +628,7 @@ class CloudServer:
 
             # Get final response from LLM
             final_response = await conn.llm_client.continue_with_client_tool_results(
-                messages, tool_continuation
+                messages, tool_continuation, session_id=conn.session.session_id
             )
             content = conn.llm_client.extract_content(final_response)
 

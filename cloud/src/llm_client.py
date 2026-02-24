@@ -183,7 +183,7 @@ class LLMClient:
 
         try:
             session = await self._get_session()
-            logger.debug(f"LLM Request:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+            logger.info(f"LLM Request:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
             async with session.post(url, headers=headers, json=payload) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -203,17 +203,226 @@ class LLMClient:
             logger.error(f"LLM request failed: {e}")
             raise Exception(f"LLM request failed: {e}")
 
+    async def chat_completion_roleplay(
+        self,
+        messages: list[dict[str, str]],
+        llm_url: str,
+        model: Optional[str] = None,
+        temperature: float = 0.8,
+        max_tokens: int = 2048,
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        """
+        角色扮演模式的 LLM 调用（使用自定义 LLM 服务器）
+
+        Args:
+            messages: 消息列表
+            llm_url: LLM 服务器 URL
+            model: 模型名称（可选，默认使用配置的模型）
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+            tools: 可选的工具列表（角色扮演模式下只提供退出/切换角色的工具）
+
+        Returns:
+            LLM 响应结果
+        """
+        url = f"{llm_url.rstrip('/')}/chat/completions"
+
+        headers = {"Content-Type": "application/json"}
+        # 尝试从环境变量或配置获取 API key
+        api_key = self.config.api_key
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        payload: dict[str, Any] = {
+            "model": model or self.config.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        # 只在角色扮演模式下添加特定的工具
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        try:
+            # 创建新的 session 以使用不同的超时设置
+            timeout = aiohttp.ClientTimeout(total=120)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                logger.debug(f"Roleplay LLM Request: {url}\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+                async with session.post(url, headers=headers, json=payload) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Roleplay LLM API error: {response.status} - {error_text}")
+                        raise Exception(f"Roleplay LLM API error: {response.status}")
+
+                    result = await response.json()
+                    logger.info(
+                        f"Roleplay LLM Response:\n{json.dumps(result, ensure_ascii=False, indent=2)}"
+                    )
+                    return result
+
+        except asyncio.TimeoutError:
+            logger.error("Roleplay LLM request timeout")
+            raise Exception("Roleplay LLM request timeout")
+        except aiohttp.ClientError as e:
+            logger.error(f"Roleplay LLM request failed: {e}")
+            raise Exception(f"Roleplay LLM request failed: {e}")
+
     async def process_with_tools(
         self,
         messages: list[dict[str, str]],
         system_prompt: Optional[str] = None,
+        session_id: str = "default",
     ) -> dict[str, Any]:
         """
         处理带工具的消息（只处理服务端工具）
 
         客户端工具需要由 server.py 处理回调流程
+
+        注意：在角色扮演模式下，会自动切换到纯对话模式，不使用任何工具。
         """
         all_messages = messages.copy()
+
+        # 检查是否处于角色扮演模式
+        is_roleplay = (
+            self.mcp_manager and
+            self.mcp_manager.is_in_roleplay_mode(session_id)
+        )
+
+        if is_roleplay:
+            # 角色扮演模式：只提供退出角色扮演的工具
+            logger.info(f"Roleplay mode detected for session {session_id}, using roleplay LLM with exit tool")
+            llm_url = self.mcp_manager.get_roleplay_llm_url(session_id)
+
+            # 获取角色扮演消息（包含上下文）
+            roleplay_messages = self.mcp_manager.get_roleplay_messages(session_id, "")
+            if roleplay_messages:
+                # 更新最后一条用户消息
+                if messages and messages[-1].get("role") == "user":
+                    roleplay_messages[-1]["content"] = messages[-1]["content"]
+                    all_messages = roleplay_messages
+
+            # 只提供角色扮演控制工具（退出和切换角色）
+            roleplay_tools = []
+            if self.mcp_manager:
+                # 获取所有工具，但只保留角色扮演相关的工具
+                all_tools = self.mcp_manager.get_openai_tools()
+                allowed_tools = ["exit_roleplay_mode", "enter_roleplay_mode"]
+                for tool in all_tools:
+                    tool_name = tool.get("function", {}).get("name")
+                    if tool_name in allowed_tools:
+                        roleplay_tools.append(tool)
+
+            # 获取角色扮演模型配置
+            roleplay_model = self.mcp_manager.get_roleplay_llm_model()
+
+            response = await self.chat_completion_roleplay(
+                messages=all_messages,
+                llm_url=llm_url,
+                model=roleplay_model,
+                tools=roleplay_tools if roleplay_tools else None,
+            )
+
+            # 检查是否有工具调用
+            choice = response.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            tool_calls = message.get("tool_calls", [])
+
+            if tool_calls:
+                logger.info(f"Roleplay mode: detected {len(tool_calls)} tool calls")
+                all_messages.append(message)
+
+                exited_roleplay = False
+                switched_character = False
+
+                for tool_call in tool_calls:
+                    function = tool_call.get("function", {})
+                    tool_name = function.get("name", "")
+                    tool_args_str = function.get("arguments", "{}")
+                    tool_call_id = tool_call.get("id")
+
+                    try:
+                        tool_args = json.loads(tool_args_str)
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    # 处理 exit_roleplay_mode 工具
+                    if tool_name == "exit_roleplay_mode" and self.mcp_manager:
+                        logger.info(f"Executing exit_roleplay_mode tool")
+                        # 注入正确的 session_id
+                        tool_args["session_id"] = session_id
+                        execute_result = await self.mcp_manager.execute_tool(
+                            tool_name, tool_args, tool_call_id
+                        )
+                        tool_result_content = json.dumps(
+                            execute_result.get(
+                                "result", execute_result.get("error", "Unknown error")
+                            )
+                        )
+
+                        all_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": tool_result_content,
+                        })
+                        exited_roleplay = True
+
+                    # 处理 enter_roleplay_mode 工具（切换角色）
+                    elif tool_name == "enter_roleplay_mode" and self.mcp_manager:
+                        character = tool_args.get("character", "")
+                        logger.info(f"Executing enter_roleplay_mode tool to switch to character: {character}")
+                        # 注入正确的 session_id
+                        tool_args["session_id"] = session_id
+                        execute_result = await self.mcp_manager.execute_tool(
+                            tool_name, tool_args, tool_call_id
+                        )
+                        tool_result_content = json.dumps(
+                            execute_result.get(
+                                "result", execute_result.get("error", "Unknown error")
+                            )
+                        )
+
+                        all_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": tool_result_content,
+                        })
+                        switched_character = True
+                    else:
+                        logger.warning(f"Roleplay mode: ignoring tool call '{tool_name}' (only roleplay control tools allowed)")
+                        # 忽略其他工具调用
+                        all_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": json.dumps({"error": f"Tool '{tool_name}' is not available in roleplay mode"}),
+                        })
+
+                # 如果退出了角色扮演，使用普通 LLM 获取最终回复
+                if exited_roleplay:
+                    logger.info("Exited roleplay mode, getting final response with normal LLM")
+                    return await self.chat_completion(all_messages, tools=None)
+
+                # 如果切换了角色，使用新角色继续对话
+                if switched_character:
+                    logger.info("Switched character in roleplay mode, continuing with new character")
+                    new_llm_url = self.mcp_manager.get_roleplay_llm_url(session_id)
+                    roleplay_model = self.mcp_manager.get_roleplay_llm_model()
+                    new_roleplay_messages = self.mcp_manager.get_roleplay_messages(session_id, "")
+                    if new_roleplay_messages:
+                        return await self.chat_completion_roleplay(
+                            messages=new_roleplay_messages,
+                            llm_url=new_llm_url,
+                            model=roleplay_model,
+                        )
+
+                return response
+
+            return response
 
         # 使用配置的系统提示词，如果没有传入则使用默认的
         prompt = system_prompt or self.config.system_prompt
@@ -292,6 +501,9 @@ class LLMClient:
                 else:
                     # 服务端工具：直接执行
                     if self.mcp_manager:
+                        # 对于角色扮演相关的工具，注入正确的 session_id
+                        if tool_name in ["enter_roleplay_mode", "exit_roleplay_mode", "get_roleplay_status"]:
+                            tool_args["session_id"] = session_id
                         execute_result = await self.mcp_manager.execute_tool(
                             tool_name, tool_args, tool_call_id
                         )
@@ -331,7 +543,8 @@ class LLMClient:
     async def continue_with_client_tool_results(
         self,
         messages: list[dict[str, str]],
-        tool_continuation: list[dict[str, Any]]
+        tool_continuation: list[dict[str, Any]],
+        session_id: str = "default",
     ) -> dict[str, Any]:
         """
         在客户端工具执行完成后继续处理
@@ -339,10 +552,28 @@ class LLMClient:
         Args:
             messages: 原始消息列表（包含user消息和历史）
             tool_continuation: 工具调用后的消息序列（assistant消息 + tool结果）
+            session_id: 会话ID（用于检测角色扮演模式）
 
         Returns:
             LLM 最终响应
         """
+        # 检查是否处于角色扮演模式（理论上不应该进入这里，因为角色扮演不使用工具）
+        is_roleplay = (
+            self.mcp_manager and
+            self.mcp_manager.is_in_roleplay_mode(session_id)
+        )
+
+        if is_roleplay:
+            logger.warning(f"continue_with_client_tool_results called in roleplay mode for session {session_id} - should not happen!")
+            # 角色扮演模式：忽略工具结果，直接使用角色扮演 LLM
+            llm_url = self.mcp_manager.get_roleplay_llm_url(session_id)
+            roleplay_model = self.mcp_manager.get_roleplay_llm_model()
+            roleplay_messages = self.mcp_manager.get_roleplay_messages(session_id, "")
+            if roleplay_messages:
+                all_messages = roleplay_messages
+            else:
+                all_messages = messages.copy()
+            return await self.chat_completion_roleplay(messages=all_messages, llm_url=llm_url, model=roleplay_model)
         all_messages = messages.copy()
 
         # 添加系统提示和位置上下文
@@ -402,3 +633,50 @@ class LLMClient:
 
         message = choices[0].get("message", {})
         return message.get("tool_calls", [])
+
+    async def chat_with_roleplay_detection(
+        self,
+        messages: list[dict[str, str]],
+        session_id: str = "default",
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        """
+        智能聊天：自动检测角色扮演模式并使用相应的 LLM 服务器
+
+        注意：在角色扮演模式下，tools 参数会被忽略（纯对话模式）。
+
+        Args:
+            messages: 消息列表
+            session_id: 会话ID
+            tools: 工具列表（可选，角色扮演模式下忽略）
+
+        Returns:
+            LLM 响应结果
+        """
+        # 检查是否处于角色扮演模式
+        is_roleplay = (
+            self.mcp_manager and
+            self.mcp_manager.is_in_roleplay_mode(session_id)
+        )
+
+        if is_roleplay:
+            # 使用角色扮演模式的 LLM 服务器
+            llm_url = self.mcp_manager.get_roleplay_llm_url(session_id)
+            logger.info(f"Using roleplay LLM: {llm_url} (tools disabled in roleplay mode)")
+
+            # 如果需要使用角色扮演的消息格式（包含上下文）
+            roleplay_messages = self.mcp_manager.get_roleplay_messages(session_id, "")
+            if roleplay_messages:
+                # 使用角色扮演管理器生成的消息（包含完整上下文）
+                # 但是需要用当前的消息更新最后一条用户消息
+                if messages and messages[-1].get("role") == "user":
+                    roleplay_messages[-1]["content"] = messages[-1]["content"]
+                    messages = roleplay_messages
+
+            return await self.chat_completion_roleplay(
+                messages=messages,
+                llm_url=llm_url,
+            )
+        else:
+            # 使用默认 LLM 服务器
+            return await self.chat_completion(messages, tools=tools)
