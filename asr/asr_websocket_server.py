@@ -53,6 +53,19 @@ VAD_SPEECH_RATIO_THRESHOLD = 0.3  # Minimum speech ratio (speech frames / total 
 NS_ENABLED = False # Enable/disable noise suppression (RNNoise)
 NS_SAMPLE_RATE = 16000  # RNNoise sample rate (must match ASR sample rate)
 
+# Speaker Verification Configuration
+SPEAKER_MODEL_ID = "iic/speech_eres2netv2_sv_zh-cn_16k-common"
+SPEAKER_THRESHOLD = 0.3  # Similarity threshold for speaker verification
+SPEAKER_DB_PATH = "data/speakers.json"
+SPEAKER_MIN_REGISTRATION_DURATION = 3.0  # seconds
+SPEAKER_MAX_REGISTRATION_DURATION = 30.0  # seconds
+
+# Global speaker verification settings
+# If set to True, all clients must pass speaker verification to use ASR
+# Set SPEAKER_VERIFICATION_DEFAULT_USER to the user ID that should be verified
+SPEAKER_VERIFICATION_REQUIRED = False # Global: force enable speaker verification for all clients
+SPEAKER_VERIFICATION_DEFAULT_USER = "user_001"  # Default user ID to verify (e.g., "user_001")
+
 # WebSocket Configuration
 WS_HOST = "0.0.0.0"
 WS_PORT = 9200
@@ -354,6 +367,103 @@ class BatchAudioBuffer:
         self.total_samples = 0
         self.total_bytes = 0
         self.is_active = False
+
+
+# ============================================================================
+# Speaker Registration Buffer
+# ============================================================================
+
+
+class SpeakerRegistrationBuffer:
+    """
+    Buffer for collecting audio data during speaker registration.
+
+    Similar to BatchAudioBuffer but specifically for speaker voiceprint
+    registration. Collects audio data and validates duration constraints.
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = ASR_SAMPLE_RATE,
+        min_duration: float = SPEAKER_MIN_REGISTRATION_DURATION,
+        max_duration: float = SPEAKER_MAX_REGISTRATION_DURATION,
+    ):
+        """
+        Initialize Speaker Registration Buffer.
+
+        Args:
+            sample_rate: Audio sample rate in Hz
+            min_duration: Minimum registration audio duration in seconds
+            max_duration: Maximum registration audio duration in seconds
+        """
+        self.sample_rate = sample_rate
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.min_samples = int(sample_rate * min_duration)
+        self.max_samples = int(sample_rate * max_duration)
+        self.buffer: list[np.ndarray] = []
+        self.total_samples = 0
+        self.total_bytes = 0
+        self.is_active = False  # Whether registration mode is active
+        self.user_id: Optional[str] = None  # User ID being registered
+
+    def start(self, user_id: str) -> None:
+        """Start registration mode for a specific user."""
+        self.buffer.clear()
+        self.total_samples = 0
+        self.total_bytes = 0
+        self.is_active = True
+        self.user_id = user_id
+
+    def add(self, audio_data: bytes) -> int:
+        """
+        Add audio data to buffer. Returns number of samples added.
+        Raises ValueError if buffer exceeds maximum size.
+        """
+        if not self.is_active:
+            return 0
+
+        # Convert bytes to int16 numpy array
+        audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+        samples_added = len(audio)
+
+        # Check if adding would exceed max size
+        if self.total_samples + samples_added > self.max_samples:
+            raise ValueError(
+                f"Audio duration exceeds maximum of {self.max_duration}s"
+            )
+
+        self.buffer.append(audio)
+        self.total_samples += samples_added
+        self.total_bytes += len(audio_data)
+
+        return samples_added
+
+    def get_audio(self) -> np.ndarray:
+        """Get all audio in buffer as a single array."""
+        if not self.buffer:
+            return np.array([], dtype=np.float32)
+        return np.concatenate(self.buffer)
+
+    def get_duration(self) -> float:
+        """Get duration of audio in buffer in seconds."""
+        return self.total_samples / self.sample_rate
+
+    def is_empty(self) -> bool:
+        """Check if buffer is empty."""
+        return len(self.buffer) == 0
+
+    def meets_minimum_duration(self) -> bool:
+        """Check if buffer has enough audio data for registration."""
+        return self.total_samples >= self.min_samples
+
+    def clear(self) -> None:
+        """Clear the buffer."""
+        self.buffer.clear()
+        self.total_samples = 0
+        self.total_bytes = 0
+        self.is_active = False
+        self.user_id = None
 
 
 # ============================================================================
@@ -989,6 +1099,286 @@ class ASRProcessor:
 
 
 # ============================================================================
+# Speaker Database
+# ============================================================================
+
+
+class SpeakerDatabase:
+    """
+    Database for storing and managing speaker voiceprint embeddings.
+
+    Stores speaker embeddings as JSON file with numpy arrays converted to lists.
+    """
+
+    def __init__(self, db_path: str = SPEAKER_DB_PATH):
+        """
+        Initialize Speaker Database.
+
+        Args:
+            db_path: Path to JSON database file
+        """
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._data: dict = {}
+        self._load_db()
+
+    def _load_db(self) -> None:
+        """Load speaker database from JSON file."""
+        if self.db_path.exists():
+            try:
+                with open(self.db_path, "r", encoding="utf-8") as f:
+                    self._data = json.load(f)
+                logger.info(f"Loaded speaker database: {len(self._data)} speakers")
+            except Exception as e:
+                logger.error(f"Failed to load speaker database: {e}")
+                self._data = {}
+        else:
+            self._data = {}
+            logger.info("Speaker database not found, creating new one")
+
+    def _save_db(self) -> None:
+        """Save speaker database to JSON file."""
+        try:
+            with open(self.db_path, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Saved speaker database: {len(self._data)} speakers")
+        except Exception as e:
+            logger.error(f"Failed to save speaker database: {e}")
+
+    def register_speaker(self, user_id: str, embedding: np.ndarray) -> bool:
+        """
+        Register a speaker with their voiceprint embedding.
+
+        Args:
+            user_id: Unique user identifier
+            embedding: Voiceprint embedding vector (numpy array)
+
+        Returns:
+            True if registration successful
+        """
+        try:
+            # Convert numpy array to list for JSON serialization
+            self._data[user_id] = {
+                "embedding": embedding.tolist(),
+                "dimension": len(embedding),
+                "registered_at": int(time.time()),
+            }
+            self._save_db()
+            logger.info(f"Registered speaker: {user_id}, embedding dimension: {len(embedding)}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to register speaker {user_id}: {e}")
+            return False
+
+    def get_speaker(self, user_id: str) -> Optional[np.ndarray]:
+        """
+        Get speaker embedding by user ID.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            Embedding numpy array or None if not found
+        """
+        if user_id not in self._data:
+            return None
+
+        # Convert list back to numpy array
+        embedding_list = self._data[user_id]["embedding"]
+        return np.array(embedding_list, dtype=np.float32)
+
+    def list_speakers(self) -> list:
+        """
+        List all registered speakers.
+
+        Returns:
+            List of speaker info dictionaries
+        """
+        speakers = []
+        for user_id, data in self._data.items():
+            speakers.append({
+                "user_id": user_id,
+                "dimension": data["dimension"],
+                "registered_at": data["registered_at"],
+            })
+        return speakers
+
+    def speaker_exists(self, user_id: str) -> bool:
+        """Check if speaker is registered."""
+        return user_id in self._data
+
+    def delete_speaker(self, user_id: str) -> bool:
+        """
+        Delete a speaker from database.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            True if deletion successful
+        """
+        if user_id in self._data:
+            del self._data[user_id]
+            self._save_db()
+            logger.info(f"Deleted speaker: {user_id}")
+            return True
+        return False
+
+
+# ============================================================================
+# Speaker Verification Processor
+# ============================================================================
+
+
+class SpeakerProcessor:
+    """
+    Speaker verification processor using ERes2NetV2 model.
+
+    Extracts speaker embeddings and verifies speaker identity using
+    cosine similarity.
+    """
+
+    def __init__(
+        self,
+        model_id: str = SPEAKER_MODEL_ID,
+        threshold: float = SPEAKER_THRESHOLD,
+    ):
+        """
+        Initialize Speaker Processor and load the model.
+
+        Args:
+            model_id: ModelScope model ID
+            threshold: Similarity threshold for verification
+        """
+        self.model_id = model_id
+        self.threshold = threshold
+
+        # Load model immediately during initialization
+        try:
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+
+            logger.info(f"Loading speaker verification model: {self.model_id}")
+            self.pipeline = pipeline(
+                task=Tasks.speaker_verification,
+                model=self.model_id,
+            )
+            logger.info("Speaker verification model loaded successfully")
+        except ImportError as e:
+            logger.error(
+                f"modelscope not installed. Install with: pip install modelscope"
+            )
+            raise e
+        except Exception as e:
+            logger.error(f"Failed to load speaker verification model: {e}")
+            raise e
+
+    def extract_embedding(self, audio: np.ndarray) -> Optional[np.ndarray]:
+        """
+        Extract speaker embedding from audio.
+
+        Args:
+            audio: Audio data as numpy array (float32, -1.0 to 1.0)
+
+        Returns:
+            Embedding vector or None if extraction failed
+        """
+        import tempfile
+        import os
+
+        temp_path = None
+        try:
+            # Create temporary wav file
+            temp_dir = Path(ASR_TEMP_DIR)
+            temp_dir.mkdir(exist_ok=True)
+
+            # Convert to int16 and save to temp file
+            audio_int16 = (audio * 32768).astype(np.int16)
+            temp_path = temp_dir / f"speaker_emb_{int(time.time() * 1000)}.wav"
+            sf.write(str(temp_path), audio_int16, ASR_SAMPLE_RATE, subtype="PCM_16")
+
+            # Call pipeline with file path in a list, output_emb=True to get embeddings
+            result = self.pipeline([str(temp_path)], output_emb=True)
+
+            if result and "embs" in result:
+                embedding = np.array(result["embs"], dtype=np.float32)
+                # Flatten if needed (pipeline returns shape [1, dim])
+                if embedding.ndim == 2 and embedding.shape[0] == 1:
+                    embedding = embedding[0]
+                logger.debug(f"Extracted embedding: shape={embedding.shape}")
+                return embedding
+            else:
+                logger.error(f"Unexpected pipeline result: {result}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to extract embedding: {e}\n{traceback.format_exc()}")
+            return None
+        finally:
+            # Clean up temp file
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except:
+                    pass
+
+    def verify(
+        self,
+        audio: np.ndarray,
+        reference_embedding: np.ndarray
+    ) -> Tuple[bool, float]:
+        """
+        Verify speaker identity using cosine similarity.
+
+        Args:
+            audio: Audio data to verify (numpy array, float32)
+            reference_embedding: Reference embedding to compare against
+
+        Returns:
+            Tuple of (is_match, similarity_score)
+        """
+        # Extract embedding from input audio
+        test_embedding = self.extract_embedding(audio)
+        if test_embedding is None:
+            logger.error("Failed to extract embedding for verification")
+            return False, 0.0
+
+        # Calculate cosine similarity
+        similarity = self._cosine_similarity(test_embedding, reference_embedding)
+        is_match = similarity >= self.threshold
+
+        logger.info(
+            f"Speaker verification: similarity={similarity:.4f}, "
+            f"threshold={self.threshold}, match={is_match}"
+        )
+
+        return is_match, similarity
+
+    @staticmethod
+    def _cosine_similarity(embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+        """
+        Calculate cosine similarity between two embeddings.
+
+        Args:
+            embedding1: First embedding vector
+            embedding2: Second embedding vector
+
+        Returns:
+            Similarity score between 0 and 1
+        """
+        # Normalize vectors
+        norm1 = np.linalg.norm(embedding1)
+        norm2 = np.linalg.norm(embedding2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        # Cosine similarity
+        similarity = np.dot(embedding1, embedding2) / (norm1 * norm2)
+        return float(similarity)
+
+
+# ============================================================================
 # ASR WebSocket Service
 # ============================================================================
 
@@ -1015,6 +1405,32 @@ class ASRWebSocketService:
         self.asr_processor = ASRProcessor()
         logger.info("ASR service initialized")
 
+        # Initialize Speaker Verification processor and database
+        # Only load the model if SPEAKER_VERIFICATION_REQUIRED is True
+        # Otherwise, load on-demand when client enables verification
+        self.speaker_processor = None
+        self.speaker_database = SpeakerDatabase()
+
+        if SPEAKER_VERIFICATION_REQUIRED and SPEAKER_VERIFICATION_DEFAULT_USER:
+            logger.info("Initializing Speaker Verification service (global config enabled)...")
+            self.speaker_processor = SpeakerProcessor()
+            logger.info("Speaker verification model loaded")
+            logger.warning(
+                f"*** GLOBAL SPEAKER VERIFICATION ENABLED *** "
+                f"All clients must verify as '{SPEAKER_VERIFICATION_DEFAULT_USER}' "
+                f"(threshold={SPEAKER_THRESHOLD})"
+            )
+        elif SPEAKER_VERIFICATION_REQUIRED:
+            logger.warning(
+                f"*** SPEAKER_VERIFICATION_REQUIRED is True but SPEAKER_VERIFICATION_DEFAULT_USER is not set *** "
+                f"Global verification will NOT be enabled. Please set SPEAKER_VERIFICATION_DEFAULT_USER."
+            )
+        else:
+            logger.info(
+                f"Speaker verification model NOT loaded (SPEAKER_VERIFICATION_REQUIRED=False). "
+                f"Model will be loaded on-demand when clients enable verification via command."
+            )
+
     async def handle_client(self, websocket):
         """Handle individual WebSocket client connection."""
         client_id = id(websocket)
@@ -1027,8 +1443,30 @@ class ASRWebSocketService:
         ns_processor = NSProcessor()  # Noise suppression (RNNoise)
         vad_processor = VADProcessor()
 
-        # Work mode: "streaming" (default) or "batch_receiving" or "batch_ready"
+        # Work mode: "streaming" (default) or "batch_receiving" or "batch_ready" or "registering"
         work_mode: SpeechBuffer.WorkMode = "streaming"
+
+        # Speaker registration buffer
+        registration_buffer = SpeakerRegistrationBuffer()
+
+        # Speaker verification state
+        # Check global configuration for forced verification
+        if SPEAKER_VERIFICATION_REQUIRED and SPEAKER_VERIFICATION_DEFAULT_USER:
+            speaker_verification_state = {
+                "enabled": True,
+                "user_id": SPEAKER_VERIFICATION_DEFAULT_USER,
+                "required": True,
+            }
+            logger.info(
+                f"[Client {client_id}] Speaker verification AUTO-ENABLED (global config): "
+                f"user={SPEAKER_VERIFICATION_DEFAULT_USER}, required=True"
+            )
+        else:
+            speaker_verification_state = {
+                "enabled": False,  # Whether speaker verification is enabled
+                "user_id": None,   # Target user ID to verify against
+                "required": False, # If True, skip ASR when verification fails
+            }
 
         try:
             async for message in websocket:
@@ -1074,6 +1512,25 @@ class ASRWebSocketService:
                             logger.error(f"[Client {client_id}] Batch buffer error: {e}")
                             await self.send_error(websocket, str(e), code=4)
                             batch_buffer.clear()
+                            work_mode = "streaming"
+                    elif work_mode == "registering":
+                        # Registration mode: accumulate audio for speaker registration
+                        try:
+                            # In registration mode, add raw message to registration buffer
+                            registration_buffer.add(message)
+
+                            # Send progress update periodically
+                            if registration_buffer.total_bytes % BATCH_CHUNK_SIZE == 0 or len(frames) == 0:
+                                await self.send_speaker_register_progress(
+                                    websocket,
+                                    state="receiving",
+                                    received_bytes=registration_buffer.total_bytes,
+                                    duration=registration_buffer.get_duration()
+                                )
+                        except ValueError as e:
+                            logger.error(f"[Client {client_id}] Registration buffer error: {e}")
+                            await self.send_error(websocket, str(e), code=14)
+                            registration_buffer.clear()
                             work_mode = "streaming"
                     else:
                         # Streaming mode: process VAD frames
@@ -1148,35 +1605,82 @@ class ASRWebSocketService:
 
                                 # Check minimum duration and run recognition
                                 if duration >= 0.3:  # Minimum 0.3 seconds
-                                    logger.info(
-                                        f"[Client {client_id}] Running segment recognition..."
-                                    )
-                                    result = self.asr_processor.process_segment_from_buffer(
-                                        speech_buffer
-                                    )
-                                    if result:
-                                        text, segment_id = result
+                                    # Speaker verification (if enabled)
+                                    skip_asr = False
+                                    if speaker_verification_state["enabled"]:
+                                        logger.info(f"[Client {client_id}] Speaker verification enabled for user: {speaker_verification_state['user_id']}")
+                                        target_user_id = speaker_verification_state["user_id"]
+
+                                        # Get reference embedding for target user
+                                        reference_embedding = self.speaker_database.get_speaker(target_user_id)
+                                        if reference_embedding is None:
+                                            logger.error(f"[Client {client_id}] Target speaker {target_user_id} not found in database")
+                                            await self.send_error(websocket, f"Speaker {target_user_id} not registered", code=16)
+                                            skip_asr = True
+                                        else:
+                                            # Lazy load speaker processor if not loaded
+                                            if self.speaker_processor is None:
+                                                logger.info(f"[Client {client_id}] Loading speaker verification model on-demand...")
+                                                self.speaker_processor = SpeakerProcessor()
+                                                logger.info(f"[Client {client_id}] Speaker verification model loaded")
+
+                                            # Verify speaker identity
+                                            is_match, similarity = self.speaker_processor.verify(
+                                                speech_audio, reference_embedding
+                                            )
+
+                                            # Send verification result to client
+                                            await self.send_speaker_verification_result(
+                                                websocket,
+                                                user_id=target_user_id,
+                                                success=is_match,
+                                                score=similarity
+                                            )
+
+                                            # Skip ASR if verification failed and required
+                                            if not is_match and speaker_verification_state["required"]:
+                                                logger.info(
+                                                    f"[Client {client_id}] Speaker verification failed, "
+                                                    f"skipping ASR (required=True)"
+                                                )
+                                                skip_asr = True
+
+                                    if not skip_asr:
                                         logger.info(
-                                            f"[Client {client_id}] Segment recognition result: {text}"
+                                            f"[Client {client_id}] Running segment recognition..."
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"[Client {client_id}] Skipping ASR (skip_asr=True)"
                                         )
 
-                                        # Validate ASR result to filter invalid/non-speech audio
-                                        if not self.asr_processor.is_valid_asr_result(text):
-                                            logger.info(
-                                                f"[Client {client_id}] ASR result filtered (invalid): {text}"
-                                            )
-                                        else:
-                                            await self.send_result(
-                                                websocket,
-                                                text,
-                                                is_final=True,
-                                                is_speeching=False,
-                                                segment_id=segment_id,
-                                            )
-                                    else:
-                                        logger.warning(
-                                            f"[Client {client_id}] Segment recognition failed"
+                                    if not skip_asr:
+                                        result = self.asr_processor.process_segment_from_buffer(
+                                            speech_buffer
                                         )
+                                        if result:
+                                            text, segment_id = result
+                                            logger.info(
+                                                f"[Client {client_id}] Segment recognition result: {text}"
+                                            )
+
+                                            # Validate ASR result to filter invalid/non-speech audio
+                                            if not self.asr_processor.is_valid_asr_result(text):
+                                                logger.info(
+                                                    f"[Client {client_id}] ASR result filtered (invalid): {text}"
+                                                )
+                                            else:
+                                                await self.send_result(
+                                                    websocket,
+                                                    text,
+                                                    is_final=True,
+                                                    is_speeching=False,
+                                                    segment_id=segment_id,
+                                                )
+                                        else:
+                                            logger.warning(
+                                                f"[Client {client_id}] Segment recognition failed"
+                                            )
                                 else:
                                     logger.info(
                                         f"[Client {client_id}] Speech segment too short ({duration:.2f}s), skipping"
@@ -1190,7 +1694,7 @@ class ASRWebSocketService:
                     try:
                         data = json.loads(message)
                         await self.handle_command(
-                            websocket, data, frame_buffer, speech_buffer, batch_buffer, ns_processor, vad_processor, work_mode
+                            websocket, data, frame_buffer, speech_buffer, batch_buffer, ns_processor, vad_processor, work_mode, registration_buffer, speaker_verification_state
                         )
                         # Update work_mode from handle_command (it may be modified)
                         work_mode = data.get("_work_mode", work_mode)
@@ -1215,6 +1719,8 @@ class ASRWebSocketService:
         ns_processor: NSProcessor,
         vad_processor: VADProcessor,
         work_mode: SpeechBuffer.WorkMode,
+        registration_buffer: SpeakerRegistrationBuffer,
+        speaker_verification_state: dict,
     ):
         """Handle control commands from client."""
         command = data.get("command")
@@ -1226,13 +1732,26 @@ class ASRWebSocketService:
             frame_buffer.clear()
             speech_buffer.clear()
             batch_buffer.clear()
+            registration_buffer.clear()
             vad_processor.reset()
             # Reinitialize NS processor to clear internal state
             if ns_processor.is_enabled():
                 ns_processor.denoiser = RNNoise(sample_rate=ns_processor.sample_rate)
+            # Reset speaker verification state
+            # Restore global config if set
+            if SPEAKER_VERIFICATION_REQUIRED and SPEAKER_VERIFICATION_DEFAULT_USER:
+                speaker_verification_state["enabled"] = True
+                speaker_verification_state["user_id"] = SPEAKER_VERIFICATION_DEFAULT_USER
+                speaker_verification_state["required"] = True
+                reset_msg = "State reset (speaker verification re-enabled by global config)"
+            else:
+                speaker_verification_state["enabled"] = False
+                speaker_verification_state["user_id"] = None
+                speaker_verification_state["required"] = False
+                reset_msg = "State reset successfully"
             data["_work_mode"] = "streaming"  # Reset to streaming mode
             await websocket.send(
-                json.dumps({"type": "reset", "message": "State reset successfully"})
+                json.dumps({"type": "reset", "message": reset_msg})
             )
 
         elif command == "batch_start":
@@ -1339,6 +1858,135 @@ class ASRWebSocketService:
                 batch_buffer.clear()
                 data["_work_mode"] = "streaming"
 
+        elif command == "speaker_register_start":
+            # Start speaker registration mode
+            user_id = data.get("user_id")
+            if not user_id:
+                await self.send_error(websocket, "Missing user_id parameter", code=10)
+                return
+
+            registration_buffer.start(user_id)
+            data["_work_mode"] = "registering"
+            logger.info(f"[Client {id(websocket)}] Speaker registration started for user: {user_id}")
+            await self.send_speaker_register_progress(
+                websocket,
+                state="started",
+                message=f"Registration started for user: {user_id}, please send audio (min {SPEAKER_MIN_REGISTRATION_DURATION}s)"
+            )
+
+        elif command == "speaker_register_end":
+            # End speaker registration and extract voiceprint
+            if work_mode != "registering":
+                await self.send_error(websocket, "Registration mode not active", code=11)
+                return
+
+            user_id = registration_buffer.user_id
+            if not user_id:
+                await self.send_error(websocket, "Registration mode error: no user_id", code=11)
+                registration_buffer.clear()
+                data["_work_mode"] = "streaming"
+                return
+
+            if registration_buffer.is_empty():
+                await self.send_error(websocket, "No audio data received", code=12)
+                registration_buffer.clear()
+                data["_work_mode"] = "streaming"
+                return
+
+            duration = registration_buffer.get_duration()
+            if not registration_buffer.meets_minimum_duration():
+                await self.send_error(
+                    websocket,
+                    f"Audio too short: {duration:.2f}s < {SPEAKER_MIN_REGISTRATION_DURATION}s",
+                    code=13
+                )
+                registration_buffer.clear()
+                data["_work_mode"] = "streaming"
+                return
+
+            # Extract embedding
+            audio = registration_buffer.get_audio()
+
+            # Lazy load speaker processor if not loaded
+            if self.speaker_processor is None:
+                logger.info(f"[Client {id(websocket)}] Loading speaker verification model on-demand for registration...")
+                self.speaker_processor = SpeakerProcessor()
+                logger.info(f"[Client {id(websocket)}] Speaker verification model loaded")
+
+            embedding = self.speaker_processor.extract_embedding(audio)
+            if embedding is None:
+                await self.send_error(websocket, "Failed to extract speaker embedding", code=14)
+                registration_buffer.clear()
+                data["_work_mode"] = "streaming"
+                return
+
+            # Register speaker
+            success = self.speaker_database.register_speaker(user_id, embedding)
+            registration_buffer.clear()
+            data["_work_mode"] = "streaming"
+
+            if success:
+                logger.info(f"[Client {id(websocket)}] Speaker registration successful: {user_id}")
+                await websocket.send(json.dumps({
+                    "type": "speaker_register_result",
+                    "success": True,
+                    "user_id": user_id,
+                    "duration": round(duration, 3),
+                    "timestamp": int(time.time() * 1000),
+                }, ensure_ascii=False))
+            else:
+                await self.send_error(websocket, "Failed to register speaker", code=14)
+
+        elif command == "speaker_verify_enable":
+            # Enable speaker verification
+            user_id = data.get("user_id")
+            if not user_id:
+                await self.send_error(websocket, "Missing user_id parameter", code=15)
+                return
+
+            # Check if speaker exists
+            if not self.speaker_database.speaker_exists(user_id):
+                await self.send_error(websocket, f"Speaker {user_id} not registered", code=16)
+                return
+
+            required = data.get("required", True)
+            speaker_verification_state["enabled"] = True
+            speaker_verification_state["user_id"] = user_id
+            speaker_verification_state["required"] = bool(required)
+
+            logger.info(
+                f"[Client {id(websocket)}] Speaker verification enabled for user: {user_id}, "
+                f"required={required}"
+            )
+            await websocket.send(json.dumps({
+                "type": "speaker_verify_enabled",
+                "user_id": user_id,
+                "required": bool(required),
+                "timestamp": int(time.time() * 1000),
+            }, ensure_ascii=False))
+
+        elif command == "speaker_verify_disable":
+            # Disable speaker verification
+            speaker_verification_state["enabled"] = False
+            speaker_verification_state["user_id"] = None
+            speaker_verification_state["required"] = False
+
+            logger.info(f"[Client {id(websocket)}] Speaker verification disabled")
+            await websocket.send(json.dumps({
+                "type": "speaker_verify_disabled",
+                "timestamp": int(time.time() * 1000),
+            }, ensure_ascii=False))
+
+        elif command == "speaker_list":
+            # List all registered speakers
+            speakers = self.speaker_database.list_speakers()
+            await websocket.send(json.dumps({
+                "type": "speaker_list",
+                "speakers": speakers,
+                "count": len(speakers),
+                "timestamp": int(time.time() * 1000),
+            }, ensure_ascii=False))
+
         else:
             await self.send_error(websocket, f"Unknown command: {command}", code=3)
 
@@ -1395,6 +2043,47 @@ class ASRWebSocketService:
             await websocket.send(json.dumps(error, ensure_ascii=False))
         except:
             pass
+
+    async def send_speaker_verification_result(
+        self,
+        websocket,
+        user_id: str,
+        success: bool,
+        score: float,
+    ):
+        """Send speaker verification result to client."""
+        result = {
+            "type": "speaker_verify_result",
+            "user_id": user_id,
+            "success": success,
+            "score": round(score, 4),
+            "threshold": SPEAKER_THRESHOLD,
+            "timestamp": int(time.time() * 1000),
+        }
+        await websocket.send(json.dumps(result, ensure_ascii=False))
+
+    async def send_speaker_register_progress(
+        self,
+        websocket,
+        state: str,
+        message: str = None,
+        received_bytes: int = None,
+        duration: float = None,
+    ):
+        """Send speaker registration progress to client."""
+        progress = {
+            "type": "speaker_register_progress",
+            "state": state,
+            "timestamp": int(time.time() * 1000),
+        }
+        if message:
+            progress["message"] = message
+        if received_bytes is not None:
+            progress["received_bytes"] = received_bytes
+        if duration is not None:
+            progress["duration"] = round(duration, 3)
+
+        await websocket.send(json.dumps(progress, ensure_ascii=False))
 
     async def send_batch_progress(
         self,

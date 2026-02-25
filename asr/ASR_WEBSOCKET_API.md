@@ -93,6 +93,158 @@ await websocket.send(audio_bytes)  # audio_bytes 为 bytes 类型
 }
 ```
 
+##### Speaker_Register_Start 命令
+
+开始说话人注册模式，采集用户声纹：
+
+```json
+{
+  "command": "speaker_register_start",
+  "user_id": "user_001"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `command` | string | 是 | 固定为 `"speaker_register_start"` |
+| `user_id` | string | 是 | 用户唯一标识符 |
+
+**响应**:
+```json
+{
+  "type": "speaker_register_progress",
+  "state": "started",
+  "message": "Registration started for user: user_001, please send audio (min 3.0s)"
+}
+```
+
+**说明**:
+- 发送此命令后进入注册模式，客户端需要发送至少 3 秒的音频数据
+- 音频时长建议 3-30 秒
+- 音频数据通过二进制消息持续发送
+- 发送完成后调用 `speaker_register_end` 命令
+
+##### Speaker_Register_End 命令
+
+结束说话人注册，提取声纹特征并保存：
+
+```json
+{
+  "command": "speaker_register_end"
+}
+```
+
+**响应（成功）**:
+```json
+{
+  "type": "speaker_register_result",
+  "success": true,
+  "user_id": "user_001",
+  "duration": 5.236,
+  "timestamp": 1704067200000
+}
+```
+
+**响应（失败）**:
+```json
+{
+  "type": "error",
+  "message": "Audio too short: 2.1s < 3.0s",
+  "code": 13,
+  "timestamp": 1704067200000
+}
+```
+
+##### Speaker_Verify_Enable 命令
+
+启用说话人验证功能：
+
+```json
+{
+  "command": "speaker_verify_enable",
+  "user_id": "user_001",
+  "required": true
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `command` | string | 是 | 固定为 `"speaker_verify_enable"` |
+| `user_id` | string | 是 | 要验证的目标用户 ID |
+| `required` | boolean | 否 | 是否强制验证（验证失败时跳过 ASR），默认 true |
+
+**响应**:
+```json
+{
+  "type": "speaker_verify_enabled",
+  "user_id": "user_001",
+  "required": true,
+  "timestamp": 1704067200000
+}
+```
+
+**说明**:
+- 启用后，每个语音段识别前会先验证说话人身份
+- 如果 `required=true` 且验证失败，不会返回 ASR 结果
+- 验证结果通过 `speaker_verify_result` 消息返回
+
+##### Speaker_Verify_Disable 命令
+
+禁用说话人验证功能：
+
+```json
+{
+  "command": "speaker_verify_disable"
+}
+```
+
+**响应**:
+```json
+{
+  "type": "speaker_verify_disabled",
+  "timestamp": 1704067200000
+}
+```
+
+##### Speaker_List 命令
+
+获取所有已注册的说话人列表：
+
+```json
+{
+  "command": "speaker_list"
+}
+```
+
+**响应**:
+```json
+{
+  "type": "speaker_list",
+  "speakers": [
+    {
+      "user_id": "user_001",
+      "dimension": 192,
+      "registered_at": 1704067200
+    },
+    {
+      "user_id": "user_002",
+      "dimension": 192,
+      "registered_at": 1704067300
+    }
+  ],
+  "count": 2,
+  "timestamp": 1704067200000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `speakers` | array | 说话人列表 |
+| `speakers[].user_id` | string | 用户 ID |
+| `speakers[].dimension` | number | 声纹向量维度 |
+| `speakers[].registered_at` | number | 注册时间戳（秒） |
+| `count` | number | 说话人总数 |
+
 ##### Batch_Start 命令
 
 开始批量识别模式，准备接收完整音频：
@@ -254,6 +406,67 @@ await websocket.send(audio_bytes)  # audio_bytes 为 bytes 类型
 | `received_bytes` | number | 已接收字节数（仅在 `receiving` 状态时包含） |
 | `message` | string | 状态描述 |
 
+#### 说话人验证结果消息
+
+```json
+{
+  "type": "speaker_verify_result",
+  "user_id": "user_001",
+  "success": true,
+  "score": 0.8532,
+  "threshold": 0.3,
+  "timestamp": 1704067200000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type` | string | 消息类型，固定为 `"speaker_verify_result"` |
+| `user_id` | string | 验证的用户 ID |
+| `success` | boolean | 验证是否成功（相似度 >= 阈值） |
+| `score` | number | 相似度分数（0-1） |
+| `threshold` | number | 验证阈值 |
+
+#### 说话人注册进度消息
+
+```json
+{
+  "type": "speaker_register_progress",
+  "state": "receiving",
+  "received_bytes": 64000,
+  "duration": 4.0,
+  "message": "Collecting audio...",
+  "timestamp": 1704067200000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type` | string | 消息类型，固定为 `"speaker_register_progress"` |
+| `state` | string | 状态：`started`(已开始)、`receiving`(接收中) |
+| `received_bytes` | number | 已接收字节数 |
+| `duration` | number | 已接收音频时长（秒） |
+| `message` | string | 状态描述 |
+
+#### 说话人注册结果消息
+
+```json
+{
+  "type": "speaker_register_result",
+  "success": true,
+  "user_id": "user_001",
+  "duration": 5.236,
+  "timestamp": 1704067200000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `type` | string | 消息类型，固定为 `"speaker_register_result"` |
+| `success` | boolean | 注册是否成功 |
+| `user_id` | string | 注册的用户 ID |
+| `duration` | number | 音频时长（秒） |
+
 | 错误码 | 说明 |
 |--------|------|
 | 1 | 无效的 JSON 消息 |
@@ -262,6 +475,13 @@ await websocket.send(audio_bytes)  # audio_bytes 为 bytes 类型
 | 4 | 批量模式未开始 |
 | 5 | 音频数据为空 |
 | 6 | 音频时长过短 |
+| 10 | 缺少 user_id 参数（注册） |
+| 11 | 注册模式未激活 |
+| 12 | 未收到音频数据（注册） |
+| 13 | 注册音频过短（< 3秒） |
+| 14 | 声纹特征提取失败 |
+| 15 | 缺少 user_id 参数（验证） |
+| 16 | 目标说话人未注册 |
 
 ## 处理流程
 
@@ -316,6 +536,66 @@ await websocket.send(audio_bytes)  # audio_bytes 为 bytes 类型
      │ <──── batch_result ───────────│ 返回识别结果
      │                               │
      └───────────────────────────────┘
+```
+
+### 说话人注册流程
+
+```
+┌─────────┐                    ┌──────────────┐
+│ Client  │                    │    Server     │
+└────┬────┘                    └──────┬───────┘
+     │                               │
+     │ ──── WebSocket Connect ────>  │
+     │                               │
+     │ ──── speaker_register_start ─>  │ 进入注册模式
+     │     (user_id: user_001)        │
+     │                               │
+     │ <──── speaker_register_progress│ state: started
+     │                               │
+     │ ──── Audio Bytes ──────────>  │ 收集音频（3-30秒）
+     │ ──── Audio Bytes ──────────>  │
+     │ ──── Audio Bytes ──────────>  │
+     │ ...                           │
+     │ <──── speaker_register_progress│ state: receiving (duration)
+     │                               │
+     │ ──── speaker_register_end ────>  │ 提取声纹并保存
+     │                               │
+     │ <──── speaker_register_result─│ success: true, user_id: user_001
+     │                               │
+     └───────────────────────────────┘
+```
+
+### 说话人验证流程
+
+```
+┌─────────┐                    ┌──────────────┐
+│ Client  │                    │    Server     │
+└────┬────┘                    └──────┬───────┘
+     │                               │
+     │ ──── WebSocket Connect ────>  │
+     │                               │
+     │ ──── speaker_verify_enable ──>  │ 启用验证
+     │     (user_id: user_001)        │     (user_id: user_001, required: true)
+     │                               │
+     │ <──── speaker_verify_enabled ──│ 确认已启用
+     │                               │
+     │ ──── Audio Bytes ──────────>  │
+     │ ──── Audio Bytes ──────────>  │
+     │                               │
+     │ <──── VAD: speech_end ────────│
+     │                               │
+     │ <──── speaker_verify_result ───│ success: true, score: 0.85
+     │                               │
+     │ <──── Result (is_final=true) ─│ 验证通过，返回 ASR 结果
+     │                               │
+     └───────────────────────────────┘
+```
+
+**验证失败时（required=true）**：
+```
+     │ <──── speaker_verify_result ───│ success: false, score: 0.25
+     │                               │
+     │ (无 ASR 结果)                   │ 验证失败，跳过 ASR
 ```
 
 ### 消息时序说明
@@ -760,11 +1040,27 @@ ws.onerror = (error) => {
 | `WS_PORT` | `9200` | WebSocket 监听端口 |
 | `VAD_THRESHOLD` | `0.5` | VAD 检测阈值 |
 | `VAD_SPEECH_FRAMES` | `3` | 进入语音状态所需连续语音帧数 |
-| `VAD_SILENCE_FRAMES` | `5` | 退出语音状态所需连续静音帧数 |
+| `VAD_SILENCE_FRAMES` | `10` | 退出语音状态所需连续静音帧数 |
 | `ENERGY_THRESHOLD` | `0.01` | 能量过滤阈值 |
 | `VAD_SPEECH_RATIO_THRESHOLD` | `0.3` | 语音比例阈值 |
 | `NS_ENABLED` | `false` | 是否启用降噪 |
 | `ASR_MIN_TEXT_LENGTH` | `2` | 最小文本长度 |
+| **说话人验证配置** | | |
+| `SPEAKER_MODEL_ID` | `"iic/speech_eres2netv2_sv_zh-cn_16k-common"` | ModelScope 说话人验证模型 ID |
+| `SPEAKER_THRESHOLD` | `0.3` | 说话人相似度阈值（0-1，越高越严格） |
+| `SPEAKER_DB_PATH` | `"data/speakers.json"` | 声纹数据库文件路径 |
+| `SPEAKER_MIN_REGISTRATION_DURATION` | `3.0` | 最短注册音频时长（秒） |
+| `SPEAKER_MAX_REGISTRATION_DURATION` | `30.0` | 最长注册音频时长（秒） |
+| `SPEAKER_VERIFICATION_REQUIRED` | `false` | 全局强制启用说话人验证 |
+| `SPEAKER_VERIFICATION_DEFAULT_USER` | `""` | 全局验证的默认用户 ID |
+
+**说话人验证说明**：
+- 当 `SPEAKER_VERIFICATION_REQUIRED=true` 时，服务器启动时加载验证模型
+- 当 `SPEAKER_VERIFICATION_REQUIRED=false` 时，模型延迟加载（客户端首次使用时加载）
+- 建议根据实际需求调整 `SPEAKER_THRESHOLD`：
+  - 更严格的验证：设置更高阈值（如 0.5-0.7）
+  - 更宽松的验证：设置更低阈值（如 0.2-0.3）
+  - 相似度分数使用余弦相似度，范围 0-1，越接近 1 表示越相似
 
 ## HTTP 服务
 
@@ -819,3 +1115,13 @@ ws.onerror = (error) => {
 4. 批量模式不经过 VAD 和质量过滤，直接对完整音频进行识别
 5. 批量识别期间发送的音频数据会被缓存，不会触发实时识别
 6. 可以通过发送 `reset` 命令取消当前的批量识别并重置状态
+
+**说话人验证注意事项:**
+1. 说话人验证需要在 ASR 识别前先进行声纹比对
+2. 启用验证后，每个语音段会先验证说话人身份，然后才执行 ASR
+3. 如果 `required=true` 且验证失败，不会返回 ASR 识别结果
+4. 验证相似度使用余弦相似度，范围 0-1，阈值默认为 0.3
+5. 注册时建议录音 5-10 秒，声音清晰、无背景噪音
+6. 同一用户多次注册会覆盖之前的声纹数据
+7. 说话人验证模型（ERes2NetV2）首次使用时会自动下载（约 70MB）
+8. 如果不需要说话人验证功能，保持 `SPEAKER_VERIFICATION_REQUIRED=false` 可以节省显存
