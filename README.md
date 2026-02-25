@@ -114,6 +114,24 @@ cd music
 sh auto.sh
 ```
 
+#### 音乐放置目录
+music/data
+
+#### 提取歌词
+```
+cd music
+# 可以修改代码，更换成更大的参数量模型，提升提取效果
+python3 get_lyrics.py
+```
+
+#### 生成封面
+```
+cd music
+# 可以修改代码，更换成更大的参数量模型，提升提取效果
+
+python3 generate_images_from_lyrics.py
+```
+
 #### 测试客户端
 [http://localhost:9100/](http://localhost:9100)
 ![网页测试客户端](pic/CLOUD_WEBCLIENT.png)
