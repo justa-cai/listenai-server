@@ -151,6 +151,6 @@ source .venv/bin/activate
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=justa-cai/listenai-server&type=Date)](https://star-history.com/#justa-cai/listenai-server&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=justa-cai/listenai-server&type=date&legend=top-left)](https://www.star-history.com/#justa-cai/listenai-server&type=date&legend=top-left)
 
 </div>
