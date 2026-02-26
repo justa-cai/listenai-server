@@ -269,8 +269,11 @@ class CloudServer:
                 messages = [{"role": "user", "content": text}]
 
             try:
-                logger.info("Calling process_with_tools...")
-                response = await conn.llm_client.process_with_tools(messages, session_id=conn.session.session_id)
+                logger.info(f"Calling process_with_tools with session_id={conn.session.session_id}...")
+                response = await conn.llm_client.process_with_tools(
+                    messages,
+                    session_id=conn.session.session_id,
+                )
                 logger.info("process_with_tools returned, extracting content and tool_calls...")
                 logger.info(f"Response structure: choices={len(response.get('choices', []))}, "
                            f"has_message={bool(response.get('choices', [{}])[0].get('message')) if response.get('choices') else False}")
@@ -375,6 +378,7 @@ class CloudServer:
                     return
 
                 # 发送最终 LLM 响应 (for cases without client tools or client tools already handled)
+                logger.info(f"Sending LLM response to client: {content[:200]}...")
                 await conn.send_json(
                     LLMResponseMessage(
                         content=content,

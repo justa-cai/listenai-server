@@ -183,7 +183,7 @@ class LLMClient:
 
         try:
             session = await self._get_session()
-            logger.info(f"LLM Request:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+            # logger.info(f"LLM Request:\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
             async with session.post(url, headers=headers, json=payload) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -191,9 +191,9 @@ class LLMClient:
                     raise Exception(f"LLM API error: {response.status}")
 
                 result = await response.json()
-                logger.info(
-                    f"LLM Response:\n{json.dumps(result, ensure_ascii=False, indent=2)}"
-                )
+                # logger.info(
+                #     f"LLM Response:\n{json.dumps(result, ensure_ascii=False, indent=2)}"
+                # )
                 return result
 
         except asyncio.TimeoutError:
@@ -202,6 +202,60 @@ class LLMClient:
         except aiohttp.ClientError as e:
             logger.error(f"LLM request failed: {e}")
             raise Exception(f"LLM request failed: {e}")
+
+    async def translate_text(
+        self,
+        text: str,
+        target_language: str,
+    ) -> str:
+        """
+        将中文文本翻译成目标语言，使用默认LLM
+
+        Args:
+            text: 要翻译的中文文本
+            target_language: 目标语言代码 (ko, ja, en, fr)
+
+        Returns:
+            翻译后的文本
+        """
+        # 语言名称映射
+        language_names = {
+            "ko": "Korean",
+            "ja": "Japanese",
+            "en": "English",
+            "fr": "French",
+        }
+
+        lang_name = language_names.get(target_language, target_language)
+
+        # 构建翻译提示词
+        translate_prompt = f"""You are a professional translator. Translate the following Chinese text to {lang_name}.
+
+Rules:
+1. Only translate the text, do not add any explanations or additional content
+2. Maintain the original tone and emotion
+3. Use natural, conversational language appropriate for a girlfriend talking to her partner
+4. Do NOT use any emojis or special symbols
+
+Text to translate:
+{text}
+
+Translated text:"""
+
+        messages = [
+            {"role": "system", "content": "You are a professional translator. Only provide the translation, no explanations."},
+            {"role": "user", "content": translate_prompt}
+        ]
+
+        try:
+            response = await self.chat_completion(messages)
+            translated = self.extract_content(response).strip()
+            logger.info(f"Translated text from Chinese to {lang_name}: {translated[:100]}...")
+            return translated
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            # 翻译失败时返回原文
+            return text
 
     async def chat_completion_roleplay(
         self,
@@ -275,6 +329,7 @@ class LLMClient:
         messages: list[dict[str, str]],
         system_prompt: Optional[str] = None,
         session_id: str = "default",
+        language: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         处理带工具的消息（只处理服务端工具）
@@ -282,8 +337,176 @@ class LLMClient:
         客户端工具需要由 server.py 处理回调流程
 
         注意：在角色扮演模式下，会自动切换到纯对话模式，不使用任何工具。
+
+        Args:
+            messages: 消息列表
+            system_prompt: 可选的系统提示词
+            session_id: 会话ID
+            language: 可选的回复语言代码 (zh, en, ja, ko, de, fr, ru, pt, es, it)
         """
         all_messages = messages.copy()
+
+        # 检查是否处于女友模式（优先级高于角色扮演模式）
+        is_girlfriend = (
+            self.mcp_manager and
+            self.mcp_manager.is_in_girlfriend_mode(session_id)
+        )
+
+        if is_girlfriend:
+            # 女友模式：翻译用户输入 → 调用 LLM → 只提供退出工具
+            logger.info(f"Girlfriend mode detected for session {session_id}, using girlfriend LLM with exit tool")
+
+            # 获取女友角色的语言代码
+            target_language = self.mcp_manager.get_girlfriend_character_language(session_id)
+            logger.info(f"Girlfriend mode: target language = {target_language}")
+
+            # 获取用户输入消息
+            user_message = ""
+            if messages and messages[-1].get("role") == "user":
+                user_message = messages[-1]["content"]
+
+            # 翻译用户输入（从中文到目标语言）
+            translated_message = user_message
+            if user_message and target_language:
+                try:
+                    translated_message = await self.translate_text(user_message, target_language)
+                    logger.info(f"Girlfriend mode: translated '{user_message[:50]}...' to '{translated_message[:50]}...'")
+                except Exception as e:
+                    logger.warning(f"Girlfriend mode: translation failed, using original message: {e}")
+                    translated_message = user_message
+
+            # 获取女友消息（包含上下文）
+            girlfriend_messages = self.mcp_manager.get_girlfriend_messages(session_id, "")
+            if girlfriend_messages:
+                # 更新最后一条用户消息为翻译后的消息
+                if girlfriend_messages and girlfriend_messages[-1].get("role") == "user":
+                    girlfriend_messages[-1]["content"] = translated_message
+                    all_messages = girlfriend_messages
+                else:
+                    # 如果没有历史消息，创建新的消息列表
+                    all_messages = [{"role": "user", "content": translated_message}]
+            else:
+                all_messages = [{"role": "user", "content": translated_message}]
+
+            # 只提供女友模式控制工具（退出）
+            girlfriend_tools = []
+            if self.mcp_manager:
+                # 获取所有工具，但只保留女友模式相关的工具
+                all_tools = self.mcp_manager.get_openai_tools()
+                allowed_tools = ["exit_girlfriend_mode", "enter_girlfriend_mode"]
+                for tool in all_tools:
+                    tool_name = tool.get("function", {}).get("name")
+                    if tool_name in allowed_tools:
+                        girlfriend_tools.append(tool)
+
+            # 使用默认 LLM 进行女友模式对话
+            response = await self.chat_completion(
+                messages=all_messages,
+                tools=girlfriend_tools if girlfriend_tools else None,
+            )
+
+            # 检查是否有工具调用
+            choice = response.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            tool_calls = message.get("tool_calls", [])
+
+            if tool_calls:
+                logger.info(f"Girlfriend mode: detected {len(tool_calls)} tool calls")
+                all_messages.append(message)
+
+                exited_girlfriend = False
+                switched_girlfriend = False
+
+                for tool_call in tool_calls:
+                    function = tool_call.get("function", {})
+                    tool_name = function.get("name", "")
+                    tool_args_str = function.get("arguments", "{}")
+                    tool_call_id = tool_call.get("id")
+
+                    try:
+                        tool_args = json.loads(tool_args_str)
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    # 处理 exit_girlfriend_mode 工具
+                    if tool_name == "exit_girlfriend_mode" and self.mcp_manager:
+                        logger.info(f"Executing exit_girlfriend_mode tool")
+                        # 注入正确的 session_id
+                        tool_args["session_id"] = session_id
+                        execute_result = await self.mcp_manager.execute_tool(
+                            tool_name, tool_args, tool_call_id
+                        )
+                        tool_result_content = json.dumps(
+                            execute_result.get(
+                                "result", execute_result.get("error", "Unknown error")
+                            )
+                        )
+
+                        all_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": tool_result_content,
+                        })
+                        exited_girlfriend = True
+
+                    # 处理 enter_girlfriend_mode 工具（切换女友）
+                    elif tool_name == "enter_girlfriend_mode" and self.mcp_manager:
+                        girlfriend_type = tool_args.get("girlfriend_type", "")
+                        logger.info(f"Executing enter_girlfriend_mode tool to switch to: {girlfriend_type}")
+                        # 注入正确的 session_id
+                        tool_args["session_id"] = session_id
+                        execute_result = await self.mcp_manager.execute_tool(
+                            tool_name, tool_args, tool_call_id
+                        )
+                        tool_result_content = json.dumps(
+                            execute_result.get(
+                                "result", execute_result.get("error", "Unknown error")
+                            )
+                        )
+
+                        all_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": tool_result_content,
+                        })
+                        switched_girlfriend = True
+                    else:
+                        logger.warning(f"Girlfriend mode: ignoring tool call '{tool_name}' (only girlfriend control tools allowed)")
+                        # 忽略其他工具调用
+                        all_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": tool_name,
+                            "content": json.dumps({"error": f"Tool '{tool_name}' is not available in girlfriend mode"}),
+                        })
+
+                # 如果退出了女友模式，使用普通 LLM 获取最终回复
+                if exited_girlfriend:
+                    logger.info("Exited girlfriend mode, getting final response with normal LLM")
+                    return await self.chat_completion(all_messages, tools=None)
+
+                # 如果切换了女友，使用新女友继续对话
+                if switched_girlfriend:
+                    logger.info("Switched girlfriend in girlfriend mode, continuing with new girlfriend")
+                    new_girlfriend_messages = self.mcp_manager.get_girlfriend_messages(session_id, "")
+                    if new_girlfriend_messages:
+                        return await self.chat_completion(
+                            messages=new_girlfriend_messages,
+                            tools=girlfriend_tools if girlfriend_tools else None,
+                        )
+
+                return response
+
+            # 如果没有工具调用，添加对话记录并返回
+            response_content = self.extract_content(response)
+            if self.mcp_manager and user_message:
+                # 保存原始用户消息（中文）和翻译后的回复
+                # 注意：这里保存的是原始中文消息和女友语言回复
+                self.mcp_manager.add_girlfriend_dialogue(session_id, user_message, response_content)
+
+            return response
 
         # 检查是否处于角色扮演模式
         is_roleplay = (
@@ -424,8 +647,23 @@ class LLMClient:
 
             return response
 
-        # 使用配置的系统提示词，如果没有传入则使用默认的
-        prompt = system_prompt or self.config.system_prompt
+        # 获取 session 语言设置（先检查，因为会决定使用哪种系统提示）
+        if self.mcp_manager:
+            session_language = self.mcp_manager.get_session_language(session_id)
+            logger.info(f"Session {session_id}: stored language = {session_language}")
+            if session_language:
+                language = session_language
+                logger.info(f"Using language from session: {language}")
+
+        # 如果有语言设置，使用多语言系统提示；否则使用默认的中文系统提示
+        if language:
+            from .mcp_manager import MCPToolManager
+            # get_language_instruction 现在返回完整的系统提示（包含多语言基础提示）
+            prompt = MCPToolManager.get_language_instruction(language)
+            logger.info(f"Using multilingual system prompt for language: {language}")
+        else:
+            # 使用配置的系统提示词
+            prompt = system_prompt or self.config.system_prompt
 
         # 添加位置上下文到系统提示
         if self.mcp_manager:
@@ -439,6 +677,7 @@ class LLMClient:
 
         if prompt:
             all_messages.insert(0, {"role": "system", "content": prompt})
+            logger.info(f"Full system prompt (first 500 chars): {prompt[:500]}...")
 
         # 收集所有工具（服务端 MCP + 客户端工具）
         tools = []
@@ -501,8 +740,13 @@ class LLMClient:
                 else:
                     # 服务端工具：直接执行
                     if self.mcp_manager:
-                        # 对于角色扮演相关的工具，注入正确的 session_id
-                        if tool_name in ["enter_roleplay_mode", "exit_roleplay_mode", "get_roleplay_status"]:
+                        # 对于需要 session_id 的工具，注入正确的 session_id
+                        tools_needing_session_id = [
+                            "enter_roleplay_mode", "exit_roleplay_mode", "get_roleplay_status",
+                            "set_response_language", "get_response_language",
+                            "enter_girlfriend_mode", "exit_girlfriend_mode", "get_girlfriend_status",
+                        ]
+                        if tool_name in tools_needing_session_id:
                             tool_args["session_id"] = session_id
                         execute_result = await self.mcp_manager.execute_tool(
                             tool_name, tool_args, tool_call_id
@@ -545,6 +789,7 @@ class LLMClient:
         messages: list[dict[str, str]],
         tool_continuation: list[dict[str, Any]],
         session_id: str = "default",
+        language: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         在客户端工具执行完成后继续处理
@@ -553,6 +798,7 @@ class LLMClient:
             messages: 原始消息列表（包含user消息和历史）
             tool_continuation: 工具调用后的消息序列（assistant消息 + tool结果）
             session_id: 会话ID（用于检测角色扮演模式）
+            language: 可选的回复语言代码 (zh, en, ja, ko, de, fr, ru, pt, es, it)
 
         Returns:
             LLM 最终响应
@@ -588,8 +834,27 @@ class LLMClient:
                 else:
                     prompt = f"# Location Context\n{location_context}\nWhen user asks about weather without specifying a city, use the current location above."
 
+        # 获取 session 语言设置
+        if self.mcp_manager:
+            session_language = self.mcp_manager.get_session_language(session_id)
+            logger.info(f"Session {session_id}: stored language = {session_language}")
+            if session_language:
+                language = session_language
+                logger.info(f"Using language from session: {language}")
+
+        # 添加语言指令到系统提示
+        if language:
+            from .mcp_manager import MCPToolManager
+            language_instruction = MCPToolManager.get_language_instruction(language)
+            logger.info(f"Adding language instruction to system prompt: {language_instruction}")
+            if prompt:
+                prompt = f"{prompt}\n\n{language_instruction}"
+            else:
+                prompt = language_instruction
+
         if prompt:
             all_messages.insert(0, {"role": "system", "content": prompt})
+            logger.info(f"Full system prompt (first 500 chars): {prompt[:500]}...")
 
         # 收集工具定义
         tools = []

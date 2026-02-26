@@ -643,9 +643,28 @@ messages = [
 
 | 工具名称 | 说明 | 参数 |
 |----------|------|------|
-| `get_weather` | 获取天气信息 | `city` (城市名称) |
-| `set_volume` | 设置音量 | `volume` (0-100) |
-| `play_music` | 播放音乐 | `query` (歌曲名/歌手), `playlist` (可选) |
+| `get_weather` | 获取天气信息 | `city` (城市名称), `date` (日期) |
+| `get_current_time` | 获取当前时间 | `timezone` (时区，可选) |
+| `get_location` | 获取当前位置信息 | 无 |
+| `set_response_language` | 设置 LLM 回复语言 | `language` (语言代码: zh/en/ja/ko/de/fr/ru/pt/es/it) |
+| `get_response_language` | 获取当前回复语言设置 | 无 |
+| `list_supported_languages` | 列出所有支持的语言 | 无 |
+| `enter_roleplay_mode` | 进入角色扮演模式 | `character` (角色名称), `session_id` (可选) |
+| `exit_roleplay_mode` | 退出角色扮演模式 | `session_id` (可选) |
+| `get_roleplay_status` | 获取角色扮演状态 | `session_id` (可选) |
+| `list_available_characters` | 列出所有可用角色 | 无 |
+
+#### 支持的语言列表
+
+| 代码 | 语言 | 代码 | 语言 |
+|------|------|------|------|
+| `zh` | 中文 | `pt` | 葡萄牙语 |
+| `en` | 英语 | `es` | 西班牙语 |
+| `ja` | 日语 | `it` | 意大利语 |
+| `ko` | 韩语 | - | - |
+| `de` | 德语 | - | - |
+| `fr` | 法语 | - | - |
+| `ru` | 俄语 | - | - |
 
 ### 7.3 客户端工具注册
 
