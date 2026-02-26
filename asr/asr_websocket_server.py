@@ -31,10 +31,22 @@ BATCH_MIN_DURATION = 0.3  # Minimum audio duration for batch mode (seconds)
 BATCH_CHUNK_SIZE = 4096  # Chunk size for sending batch progress updates
 
 # VAD Configuration
+# Frame timing: 256 samples at 16kHz = 16ms per frame
 VAD_HOP_SIZE = 256
-VAD_THRESHOLD = 0.5
-VAD_SPEECH_FRAMES = 3  # Need N consecutive speech frames to enter speech state (prevents false triggers)
-VAD_SILENCE_FRAMES = 10  # Need N consecutive silence frames to exit speech state (hysteresis)
+VAD_THRESHOLD = 0.5  # Speech detection sensitivity (0.0-1.0, lower = more sensitive)
+
+# Speech detection timing (based on 16ms frame size):
+# - SPEECH_FRAMES: Consecutive speech frames needed to enter speech state (prevents false triggers from noise)
+# - SILENCE_FRAMES: Consecutive silence frames needed to exit speech state (prevents early cutoff on pauses)
+# - PREFIX_PADDING_MS: Pre-roll audio duration to prepend when speech starts (prevents cutting off speech start)
+#
+# Recommended configurations:
+# - Standard/quiet environment: SPEECH_FRAMES=3 (48ms), SILENCE_FRAMES=10-20 (160-320ms), PREFIX_PADDING_MS=500
+# - Noisy environment: SPEECH_FRAMES=5-10 (80-160ms), SILENCE_FRAMES=20-30 (320-480ms), PREFIX_PADDING_MS=800
+# - Fast response: SPEECH_FRAMES=3 (48ms), SILENCE_FRAMES=10 (160ms), PREFIX_PADDING_MS=300
+VAD_SPEECH_FRAMES = 10  # 160ms - prevents false triggers from sudden noises in noisy environments
+VAD_SILENCE_FRAMES = 30  # 480ms - avoids premature cutoff on brief pauses during speech
+VAD_PREFIX_PADDING_MS = 800  # 800ms - pre-roll audio to capture speech beginning (500-1000ms typical)
 
 # ASR Configuration
 ASR_MODEL_DIR = "FunAudioLLM/Fun-ASR-Nano-2512"
@@ -1443,6 +1455,11 @@ class ASRWebSocketService:
         ns_processor = NSProcessor()  # Noise suppression (RNNoise)
         vad_processor = VADProcessor()
 
+        # Prefix padding buffer: stores recent audio frames for pre-roll when speech starts
+        # Size based on VAD_PREFIX_PADDING_MS (e.g., 800ms = 50 frames at 16ms/frame)
+        prefix_padding_frames = max(1, int(VAD_PREFIX_PADDING_MS / 16))
+        prefix_buffer: deque[np.ndarray] = deque(maxlen=prefix_padding_frames)
+
         # Work mode: "streaming" (default) or "batch_receiving" or "batch_ready" or "registering"
         work_mode: SpeechBuffer.WorkMode = "streaming"
 
@@ -1543,6 +1560,9 @@ class ASRWebSocketService:
                                 / 32768.0
                             )
 
+                            # Update prefix padding buffer (always maintain recent frames for potential pre-roll)
+                            prefix_buffer.append(chunk_float32)
+
                             # Process this single VAD frame (this may change the state)
                             was_speeching = vad_processor.is_speeching
                             is_speeching, _ = vad_processor.process_frame(chunk_float32)
@@ -1551,8 +1571,20 @@ class ASRWebSocketService:
                             if not was_speeching and is_speeching:
                                 # Speech segment STARTED
                                 speech_buffer.start()
+
+                                # Add prefix padding frames from buffer (pre-roll to capture speech beginning)
+                                if prefix_buffer:
+                                    prefix_padding_ms = len(prefix_buffer) * 16
+                                    logger.info(
+                                        f"[Client {client_id}] Speech segment started "
+                                        f"(with {len(prefix_buffer)} frames prefix padding = {prefix_padding_ms}ms)"
+                                    )
+                                    for prefix_frame in prefix_buffer:
+                                        speech_buffer.add(prefix_frame)
+                                else:
+                                    logger.info(f"[Client {client_id}] Speech segment started (no prefix padding)")
+
                                 speech_buffer.add(chunk_float32)
-                                logger.info(f"[Client {client_id}] Speech segment started")
                                 # Send VAD event to client
                                 await self.send_vad_event(websocket, speech_started=True)
                             elif was_speeching and is_speeching:
