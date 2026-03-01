@@ -4,7 +4,10 @@
 
 ## 社群
 欢迎进群交流
-![社群二维码](pic/飞书20260224-143827.png)
+
+<p align="center">
+  <img src="pic/weixin-1.png" width="200" alt="微信社群">
+</p>
 
 ## 模块说明
 
