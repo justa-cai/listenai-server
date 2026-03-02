@@ -44,9 +44,9 @@ VAD_THRESHOLD = 0.5  # Speech detection sensitivity (0.0-1.0, lower = more sensi
 # - Standard/quiet environment: SPEECH_FRAMES=3 (48ms), SILENCE_FRAMES=10-20 (160-320ms), PREFIX_PADDING_MS=500
 # - Noisy environment: SPEECH_FRAMES=5-10 (80-160ms), SILENCE_FRAMES=20-30 (320-480ms), PREFIX_PADDING_MS=800
 # - Fast response: SPEECH_FRAMES=3 (48ms), SILENCE_FRAMES=10 (160ms), PREFIX_PADDING_MS=300
-VAD_SPEECH_FRAMES = 10  # 160ms - prevents false triggers from sudden noises in noisy environments
-VAD_SILENCE_FRAMES = 30  # 480ms - avoids premature cutoff on brief pauses during speech
-VAD_PREFIX_PADDING_MS = 800  # 800ms - pre-roll audio to capture speech beginning (500-1000ms typical)
+VAD_SPEECH_FRAMES = 3  # 48ms - faster speech detection for testing
+VAD_SILENCE_FRAMES = 15  # 240ms - shorter silence timeout for testing
+VAD_PREFIX_PADDING_MS = 500  # 500ms - less padding for faster response
 
 # ASR Configuration
 ASR_MODEL_DIR = "FunAudioLLM/Fun-ASR-Nano-2512"
@@ -64,6 +64,22 @@ VAD_SPEECH_RATIO_THRESHOLD = 0.3  # Minimum speech ratio (speech frames / total 
 # Noise Suppression Configuration
 NS_ENABLED = False # Enable/disable noise suppression (RNNoise)
 NS_SAMPLE_RATE = 16000  # RNNoise sample rate (must match ASR sample rate)
+
+# OPUS Audio Format Configuration
+# OPUS is a low-latency audio codec that significantly reduces bandwidth usage
+# At 16kHz mono with 24kbps bitrate, OPUS achieves ~6:1 compression ratio
+OPUS_ENABLED = True  # Enable OPUS format support
+OPUS_SAMPLE_RATE = 16000  # Hz - must match ASR sample rate
+OPUS_CHANNELS = 1  # Mono
+OPUS_FRAME_SIZE = 320  # 20ms at 16kHz = 320 samples
+OPUS_APPLICATION = "voip"  # Low latency mode for real-time communication
+OPUS_BITRATE = 24000  # Target bitrate in bps (24kbps)
+OPUS_FRAME_DURATION_MS = 20  # 20ms frame size
+OPUS_DECODED_SIZE = int(OPUS_SAMPLE_RATE * OPUS_FRAME_DURATION_MS / 1000)  # 320 samples
+
+# Supported audio formats
+SUPPORTED_AUDIO_FORMATS = ["pcm", "opus"]
+DEFAULT_AUDIO_FORMAT = "pcm"  # Default audio format for new connections
 
 # Speaker Verification Configuration
 SPEAKER_MODEL_ID = "iic/speech_eres2netv2_sv_zh-cn_16k-common"
@@ -119,8 +135,9 @@ class FrameBuffer:
     Buffer for accumulating audio data across WebSocket messages.
     Ensures complete VAD frames are processed without data loss.
 
-    When a message size is not a multiple of the VAD frame size,
-    the remaining bytes are stored and combined with the next message.
+    Supports both PCM and OPUS audio formats:
+    - PCM: Raw PCM Int16 bytes
+    - OPUS: Compressed audio packets (decoded internally)
 
     Example with 20ms interval (640 bytes, 1.25 frames):
     - Message 1: 640 bytes → Extract 1 frame (512 bytes), keep 128 bytes
@@ -128,48 +145,116 @@ class FrameBuffer:
     - Message 3: 640 bytes → 256 + 640 = 896 bytes → Extract 1 frame, keep 384 bytes
     """
 
-    def __init__(self, frame_size: int = VAD_HOP_SIZE * 2):
+    def __init__(self, frame_size: int = VAD_HOP_SIZE * 2, audio_format: str = "pcm"):
         """
         Args:
             frame_size: Size of one VAD frame in bytes (default: 512 bytes for 256 samples * 2 bytes/sample)
+            audio_format: Audio format ("pcm" or "opus")
         """
         self.frame_size = frame_size
-        self.buffer: bytes = b""  # Accumulated audio data
+        self.audio_format = audio_format.lower()
+        self.buffer: bytes = b""  # Accumulated audio data (PCM only)
+        self.pcm_buffer: list[float] = []  # Decoded PCM samples (for both PCM and OPUS)
 
-    def add(self, audio_data: bytes) -> list[bytes]:
+        # OPUS decoder
+        self.opus_decoder: Optional[OpusProcessor] = None
+        if self.audio_format == "opus":
+            try:
+                self.opus_decoder = OpusProcessor(
+                    sample_rate=ASR_SAMPLE_RATE,
+                    channels=1,
+                    frame_size=OPUS_DECODED_SIZE,
+                )
+                logger.info(f"FrameBuffer: OPUS decoder initialized")
+            except Exception as e:
+                logger.error(f"FrameBuffer: Failed to initialize OPUS decoder: {e}")
+                self.audio_format = "pcm"  # Fallback to PCM
+
+    def set_format(self, audio_format: str) -> None:
+        """
+        Change audio format (must be done when buffer is empty).
+
+        Args:
+            audio_format: New audio format ("pcm" or "opus")
+        """
+        if self.buffer or self.pcm_buffer:
+            logger.warning("FrameBuffer: Cannot change format while buffer has data")
+            return
+
+        audio_format = audio_format.lower()
+        if audio_format not in SUPPORTED_AUDIO_FORMATS:
+            logger.error(f"FrameBuffer: Unsupported audio format: {audio_format}")
+            return
+
+        self.audio_format = audio_format
+
+        if audio_format == "opus" and self.opus_decoder is None:
+            try:
+                self.opus_decoder = OpusProcessor(
+                    sample_rate=ASR_SAMPLE_RATE,
+                    channels=1,
+                    frame_size=OPUS_DECODED_SIZE,
+                )
+                logger.info(f"FrameBuffer: OPUS decoder initialized")
+            except Exception as e:
+                logger.error(f"FrameBuffer: Failed to initialize OPUS decoder: {e}")
+                self.audio_format = "pcm"
+
+    def add(self, audio_data: bytes) -> list[np.ndarray]:
         """
         Add new audio data and extract complete VAD frames.
 
         Args:
-            audio_data: Raw audio bytes from WebSocket message
+            audio_data: Raw audio bytes (PCM) or OPUS encoded packet from WebSocket message
 
         Returns:
-            List of complete VAD frames (each exactly frame_size bytes)
+            List of complete VAD frames (float32 numpy arrays)
         """
-        # Combine with existing buffer
-        self.buffer += audio_data
-
         frames = []
 
-        # Extract complete frames
-        while len(self.buffer) >= self.frame_size:
-            frame = self.buffer[: self.frame_size]
-            frames.append(frame)
-            self.buffer = self.buffer[self.frame_size :]
+        if self.audio_format == "pcm":
+            # Decode PCM: bytes -> int16 -> float32
+            audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
+            audio_float32 = audio_int16.astype(np.float32) / 32768.0
+            self.pcm_buffer.extend(audio_float32.tolist())
+
+        elif self.audio_format == "opus":
+            # Decode OPUS packet
+            if self.opus_decoder is None:
+                logger.error("FrameBuffer: OPUS decoder not initialized")
+                return frames
+
+            decoded = self.opus_decoder.decode_packet(audio_data)
+            if decoded is not None:
+                self.pcm_buffer.extend(decoded.tolist())
+            else:
+                logger.warning("FrameBuffer: Failed to decode OPUS packet, skipping")
+
+        else:
+            logger.error(f"FrameBuffer: Unknown audio format: {self.audio_format}")
+            return frames
+
+        # Extract complete VAD frames from PCM samples
+        while len(self.pcm_buffer) >= self.frame_size:
+            frame_samples = self.pcm_buffer[:self.frame_size]
+            frame_array = np.array(frame_samples, dtype=np.float32)
+            frames.append(frame_array)
+            self.pcm_buffer = self.pcm_buffer[self.frame_size:]
 
         return frames
 
     def has_remaining(self) -> bool:
         """Check if there's remaining data in the buffer."""
-        return len(self.buffer) > 0
+        return len(self.pcm_buffer) > 0
 
     def get_remaining_size(self) -> int:
-        """Get size of remaining data in bytes."""
-        return len(self.buffer)
+        """Get size of remaining data in samples."""
+        return len(self.pcm_buffer)
 
     def clear(self) -> None:
         """Clear the buffer."""
         self.buffer = b""
+        self.pcm_buffer.clear()
 
 
 class AudioBuffer:
@@ -476,6 +561,97 @@ class SpeakerRegistrationBuffer:
         self.total_bytes = 0
         self.is_active = False
         self.user_id = None
+
+
+# ============================================================================
+# OPUS Decoder
+# ============================================================================
+
+try:
+    from opuslib import Decoder as OpusDecoder
+    OPUS_AVAILABLE = True
+except ImportError:
+    OPUS_AVAILABLE = False
+    logger.warning(
+        "opuslib not installed. OPUS format disabled. "
+        "Install with: pip install opuslib"
+    )
+
+
+class OpusProcessor:
+    """
+    OPUS audio decoder for receiving compressed audio streams.
+
+    OPUS is a low-latency audio codec ideal for real-time applications.
+    At 16kHz mono with 24kbps bitrate, OPUS achieves ~6:1 compression ratio
+    compared to raw PCM (32kbps), significantly reducing bandwidth usage.
+
+    Frame sizes:
+    - 20ms frame: 320 samples -> ~40-80 bytes encoded
+    - Compression: 640 bytes (PCM) -> ~60 bytes (OPUS) = ~91% bandwidth reduction
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = OPUS_SAMPLE_RATE,
+        channels: int = OPUS_CHANNELS,
+        frame_size: int = OPUS_DECODED_SIZE,
+    ):
+        """
+        Initialize OPUS decoder.
+
+        Args:
+            sample_rate: Output sample rate (must match ASR: 16000 Hz)
+            channels: Number of audio channels (1 for mono)
+            frame_size: Expected frame size in samples (320 for 20ms @ 16kHz)
+        """
+        if not OPUS_AVAILABLE:
+            raise RuntimeError("opuslib not available. Install with: pip install opuslib")
+
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.frame_size = frame_size
+
+        try:
+            # Create OPUS decoder
+            self.decoder = OpusDecoder(fs=sample_rate, channels=channels)
+            logger.info(
+                f"OPUS decoder initialized: {sample_rate}Hz, {channels}ch, "
+                f"frame_size={frame_size} samples ({frame_size/sample_rate*1000:.1f}ms)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize OPUS decoder: {e}")
+            raise
+
+    def decode_packet(self, encoded_data: bytes) -> Optional[np.ndarray]:
+        """
+        Decode an OPUS packet to PCM audio.
+
+        Args:
+            encoded_data: OPUS encoded packet (bytes)
+
+        Returns:
+            Decoded audio as float32 numpy array, or None if decode fails
+        """
+        try:
+            # Decode the OPUS packet
+            decoded_bytes = self.decoder.decode(encoded_data, self.frame_size, decode_fec=False)
+
+            # Convert to numpy array (int16)
+            audio_int16 = np.frombuffer(decoded_bytes, dtype=np.int16)
+
+            # Convert to float32 normalized to [-1, 1]
+            audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+            return audio_float32
+
+        except Exception as e:
+            logger.error(f"OPUS decode error: {e}")
+            return None
+
+    def reset(self) -> None:
+        """Reset decoder state."""
+        pass
 
 
 # ============================================================================
@@ -1448,8 +1624,11 @@ class ASRWebSocketService:
         client_id = id(websocket)
         logger.info(f"[Client {client_id}] Connected from {websocket.remote_address}")
 
+        # Client audio format setting
+        client_audio_format = DEFAULT_AUDIO_FORMAT
+
         # Initialize client-specific buffers and processors
-        frame_buffer = FrameBuffer()  # Cross-message frame buffering (NO DATA LOSS!)
+        frame_buffer = FrameBuffer(frame_size=VAD_HOP_SIZE, audio_format=client_audio_format)  # VAD_HOP_SIZE = 256 samples
         speech_buffer = SpeechBuffer(client_id=str(client_id))  # For storing speech segments
         batch_buffer = BatchAudioBuffer()  # For batch mode audio
         ns_processor = NSProcessor()  # Noise suppression (RNNoise)
@@ -1490,7 +1669,8 @@ class ASRWebSocketService:
                 # Check if message is binary (audio data)
                 if isinstance(message, bytes):
                     # Step 1: Apply Noise Suppression (NS) on raw audio data first
-                    if ns_processor.is_enabled():
+                    # Skip NS for OPUS format (already compressed/processed)
+                    if ns_processor.is_enabled() and client_audio_format == "pcm":
                         # Convert bytes to float32
                         audio_float32 = (
                             np.frombuffer(message, dtype=np.int16).astype(
@@ -1507,6 +1687,10 @@ class ASRWebSocketService:
                     frames = frame_buffer.add(message)
 
                     # Debug logging (use DEBUG level to reduce spam)
+                    logger.debug(
+                        f"[Client {client_id}] Received {len(message)} bytes (format: {client_audio_format}), "
+                        f"extracted {len(frames)} frame(s), {frame_buffer.get_remaining_size()} samples remaining"
+                    )
                     logger.debug(
                         f"[Client {client_id}] Received {len(message)} bytes, extracted {len(frames)} frame(s), {frame_buffer.get_remaining_size()} bytes remaining"
                     )
@@ -1551,14 +1735,9 @@ class ASRWebSocketService:
                             work_mode = "streaming"
                     else:
                         # Streaming mode: process VAD frames
-                        for chunk_bytes in frames:
-                            # Convert bytes to float32 audio for VAD and speech_buffer
-                            chunk_float32 = (
-                                np.frombuffer(chunk_bytes, dtype=np.int16).astype(
-                                    np.float32
-                                )
-                                / 32768.0
-                            )
+                        for chunk_float32 in frames:
+                            # FrameBuffer.add() now returns float32 numpy arrays directly
+                            # No need to convert from bytes
 
                             # Update prefix padding buffer (always maintain recent frames for potential pre-roll)
                             prefix_buffer.append(chunk_float32)
@@ -1726,10 +1905,11 @@ class ASRWebSocketService:
                     try:
                         data = json.loads(message)
                         await self.handle_command(
-                            websocket, data, frame_buffer, speech_buffer, batch_buffer, ns_processor, vad_processor, work_mode, registration_buffer, speaker_verification_state
+                            websocket, data, frame_buffer, speech_buffer, batch_buffer, ns_processor, vad_processor, work_mode, registration_buffer, speaker_verification_state, client_id, client_audio_format
                         )
-                        # Update work_mode from handle_command (it may be modified)
+                        # Update work_mode and client_audio_format from handle_command (they may be modified)
                         work_mode = data.get("_work_mode", work_mode)
+                        client_audio_format = data.get("_audio_format", client_audio_format)
                     except json.JSONDecodeError:
                         await self.send_error(websocket, "Invalid JSON message", code=1)
 
@@ -1753,12 +1933,31 @@ class ASRWebSocketService:
         work_mode: SpeechBuffer.WorkMode,
         registration_buffer: SpeakerRegistrationBuffer,
         speaker_verification_state: dict,
+        client_id: int,
+        client_audio_format: str,
     ):
         """Handle control commands from client."""
         command = data.get("command")
 
         if command == "ping":
             await websocket.send(json.dumps({"type": "pong"}))
+
+        elif command == "set_audio_format":
+            # Set audio format (pcm or opus)
+            audio_format = data.get("format", "pcm").lower()
+            if audio_format not in SUPPORTED_AUDIO_FORMATS:
+                await self.send_error(websocket, f"Unsupported audio format: {audio_format}. Supported: {SUPPORTED_AUDIO_FORMATS}", code=17)
+                return
+
+            logger.info(f"[Client {client_id}] Audio format changed from {client_audio_format} to: {audio_format}")
+            frame_buffer.set_format(audio_format)
+            data["_audio_format"] = audio_format
+
+            await websocket.send(json.dumps({
+                "type": "audio_format_set",
+                "format": audio_format,
+                "timestamp": int(time.time() * 1000),
+            }, ensure_ascii=False))
 
         elif command == "reset":
             frame_buffer.clear()
@@ -1782,6 +1981,8 @@ class ASRWebSocketService:
                 speaker_verification_state["required"] = False
                 reset_msg = "State reset successfully"
             data["_work_mode"] = "streaming"  # Reset to streaming mode
+            data["_audio_format"] = DEFAULT_AUDIO_FORMAT  # Reset to default audio format
+            frame_buffer.set_format(DEFAULT_AUDIO_FORMAT)
             await websocket.send(
                 json.dumps({"type": "reset", "message": reset_msg})
             )
